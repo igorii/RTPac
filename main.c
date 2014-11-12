@@ -8,6 +8,7 @@
 #include <netinet/if_ether.h>
 
 #include "defs.h"
+#define SIZE_ETHERNET 14
 
 void print_hex(const char *s)
 {
@@ -20,18 +21,38 @@ void print_hex(const char *s)
     printf("\n");
 }
 
-void proc_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
-        const u_char* packet)
+void process_tcp_packet (
+        const u_char *packet,
+        const struct sniff_ethernet *ethernet,
+        const struct sniff_ip *ip,
+        const u_int size_ip
+        )
 {
-
-#define SIZE_ETHERNET 14
-
-    const struct sniff_ethernet *ethernet; /* The ethernet header */
-    const struct sniff_ip *ip;             /* The IP header */
     const struct sniff_tcp *tcp;           /* The TCP header */
     const char *payload;                   /* Packet payload */
-    u_int size_ip;
     u_int size_tcp;
+
+    tcp = (struct sniff_tcp*)(packet + SIZE_ETHERNET + size_ip);
+    size_tcp = TH_OFF(tcp) * 4;
+    if (size_tcp < 20) {
+        printf("   * Invalid TCP header length: %u bytes\n", size_tcp);
+        return;
+    }
+
+    printf("   Src port: %d\n", ntohs(tcp->th_sport));
+    printf("   Dst port: %d\n", ntohs(tcp->th_dport));
+    payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
+    print_hex (payload);
+}
+
+void process_udp_packet () {}
+
+void process_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
+        const u_char* packet)
+{
+    const struct sniff_ethernet *ethernet; /* The ethernet header */
+    const struct sniff_ip *ip;             /* The IP header */
+    u_int size_ip;
 
     ethernet = (struct sniff_ethernet*)(packet);
     ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
@@ -48,36 +69,21 @@ void proc_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
     switch(ip->ip_p) {
         case IPPROTO_TCP:
             printf("   Protocol: TCP\n");
+            process_tcp_packet(packet, ethernet, ip, size_ip);
             break;
         case IPPROTO_UDP:
             printf("   Protocol: UDP\n");
-            return;
+            process_udp_packet();
+            break;
         case IPPROTO_ICMP:
-            printf("   Protocol: ICMP\n");
             return;
         case IPPROTO_IP:
-            printf("   Protocol: IP\n");
             return;
         default:
-            printf("   Protocol: unknown\n");
             return;
     }
-
-    tcp = (struct sniff_tcp*)(packet + SIZE_ETHERNET + size_ip);
-
-    //size_tcp = TH_OFF(tcp) * 4;
-    //if (size_tcp < 20) {
-    //    printf("   * Invalid TCP header length: %u bytes\n", size_tcp);
-    //    return;
-    //}
-
-    printf("   Src port: %d\n", ntohs(tcp->th_sport));
-    printf("   Dst port: %d\n", ntohs(tcp->th_dport));
-
-    //payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
-
-    //print_hex(payload);
 }
+
 
 int main(int argc,char **argv)
 {
@@ -101,7 +107,7 @@ int main(int argc,char **argv)
         exit(1);
     }
 
-    pcap_loop(descr, -1, proc_packet, NULL);
+    pcap_loop(descr, -1, process_packet, NULL);
     printf("Done\n");
     return 0;
 }
