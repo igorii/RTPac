@@ -12,14 +12,14 @@
 #define SIZE_ETHERNET 14
 
 typedef enum { P_TCP, P_UDP } Protocol;
-typedef enum { TCP, TCPACK, TCPRST, UDP } PrimaryClass;
+typedef enum { TCP, TCPSYN, TCPRST, UDP } PrimaryClass;
 
 PrimaryClass get_primary_class(Protocol proto, const struct sniff_tcp *tcp)
 {
     if (proto == P_UDP) {
         return UDP;
-    } else if (tcp->th_flags & TH_ACK) {
-        return TCPACK;
+    } else if (tcp->th_flags & TH_SYN) {
+        return TCPSYN;
     } else if (tcp->th_flags & TH_RST) {
         return TCPRST;
     } else {
@@ -69,7 +69,7 @@ void process_tcp_packet (
         )
 {
     const struct sniff_tcp *tcp;           /* The TCP header */
-    const unsigned char *payload;                   /* Packet payload */
+    const unsigned char *payload;          /* Packet payload */
     u_int size_tcp;
 
     tcp = (struct sniff_tcp*)(packet + SIZE_ETHERNET + size_ip);
@@ -90,6 +90,7 @@ void process_tcp_packet (
     printf("   To              : %s\n", inet_ntoa(ip->ip_dst));
     printf("   Src port        : %d\n", ntohs(tcp->th_sport));
     printf("   Dst port        : %d\n", ntohs(tcp->th_dport));
+    printf("   Primary class   : %d\n", get_primary_class(P_TCP, tcp));
     printf("   Secondary class : %d\n", get_secondary_class(ntohs(tcp->th_dport)));
     payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     print_hex (payload);
@@ -97,6 +98,7 @@ void process_tcp_packet (
 
 void process_udp_packet () {
     printf("   Protocol: UDP\n");
+    printf("   Primary class   : %d\n", get_primary_class(P_UDP, NULL));
 }
 
 void process_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
