@@ -6,11 +6,44 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
+#include <set>
+
+typedef enum { TCP, TCPACK, TCPRST, UDP } PrimaryClass;
+
+PrimaryClass get_primary_class()
+{
+    return TCP;
+}
+
+// 1) Divide packets into packet classes
+//
+//      First  Dimension  = TCP | TCP SYN | TCP RST | UDP
+//      Second Dimension  = Port range
+//          80                           -- HTTP
+//          0     - 1023 (excluding 80)  -- Well Known Ports (divide into groups of 10)
+//          1024  - 49151                -- Registered Ports (divide into groups of 100)
+//          49152 - 65535                -- DynamicPrivate Ports
+unsigned short get_secondary_class (unsigned short dst)
+{
+    if (dst == 80) {
+        return 0;
+    } else if (dst < 1024) {
+        return 4 + dst / 10;
+    } else if (dst < 49124) {
+        return 107 + (dst - 1024) / 100;
+    } else if (dst < 49152) {
+        return 2;
+    } else {
+        return 3;
+    }
+}
+
+
 
 #include "defs.h"
 #define SIZE_ETHERNET 14
 
-void print_hex(const char *s)
+void print_hex(const unsigned char *s)
 {
     while (*s) {
         if (' ' <= *s && '~' >= *s) {
@@ -29,7 +62,7 @@ void process_tcp_packet (
         )
 {
     const struct sniff_tcp *tcp;           /* The TCP header */
-    const char *payload;                   /* Packet payload */
+    const unsigned char *payload;                   /* Packet payload */
     u_int size_tcp;
 
     tcp = (struct sniff_tcp*)(packet + SIZE_ETHERNET + size_ip);
@@ -39,13 +72,25 @@ void process_tcp_packet (
         return;
     }
 
-    printf("   Src port: %d\n", ntohs(tcp->th_sport));
-    printf("   Dst port: %d\n", ntohs(tcp->th_dport));
+    // TODO REMOVE THIS
+    //   Skip SSH traffic for now to remove feedback loop
+    if (22 == ntohs(tcp->th_sport) || 22 == ntohs(tcp->th_dport)) {
+        return;
+    }
+
+    printf("   Protocol: TCP\n");
+    printf("   From            : %s\n", inet_ntoa(ip->ip_src));
+    printf("   To              : %s\n", inet_ntoa(ip->ip_dst));
+    printf("   Src port        : %d\n", ntohs(tcp->th_sport));
+    printf("   Dst port        : %d\n", ntohs(tcp->th_dport));
+    printf("   Secondary class : %d\n", get_secondary_class(ntohs(tcp->th_dport)));
     payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     print_hex (payload);
 }
 
-void process_udp_packet () {}
+void process_udp_packet () {
+    printf("   Protocol: UDP\n");
+}
 
 void process_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
         const u_char* packet)
@@ -63,16 +108,11 @@ void process_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
         return;
     }
 
-    printf("       From: %s\n", inet_ntoa(ip->ip_src));
-    printf("         To: %s\n", inet_ntoa(ip->ip_dst));
-
     switch(ip->ip_p) {
         case IPPROTO_TCP:
-            printf("   Protocol: TCP\n");
             process_tcp_packet(packet, ethernet, ip, size_ip);
             break;
         case IPPROTO_UDP:
-            printf("   Protocol: UDP\n");
             process_udp_packet();
             break;
         case IPPROTO_ICMP:
@@ -84,8 +124,7 @@ void process_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
     }
 }
 
-
-int main(int argc,char **argv)
+int main(int argc, char **argv)
 {
     int i;
     char *dev;
