@@ -8,11 +8,23 @@
 #include <netinet/if_ether.h>
 #include <set>
 
+#include "defs.h"
+#define SIZE_ETHERNET 14
+
+typedef enum { P_TCP, P_UDP } Protocol;
 typedef enum { TCP, TCPACK, TCPRST, UDP } PrimaryClass;
 
-PrimaryClass get_primary_class()
+PrimaryClass get_primary_class(Protocol proto, const struct sniff_tcp *tcp)
 {
-    return TCP;
+    if (proto == P_UDP) {
+        return UDP;
+    } else if (tcp->th_flags & TH_ACK) {
+        return TCPACK;
+    } else if (tcp->th_flags & TH_RST) {
+        return TCPRST;
+    } else {
+        return TCP;
+    }
 }
 
 // 1) Divide packets into packet classes
@@ -37,11 +49,6 @@ unsigned short get_secondary_class (unsigned short dst)
         return 3;
     }
 }
-
-
-
-#include "defs.h"
-#define SIZE_ETHERNET 14
 
 void print_hex(const unsigned char *s)
 {
