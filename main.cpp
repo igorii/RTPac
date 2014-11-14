@@ -10,11 +10,22 @@
 
 #include "defs.h"
 #define SIZE_ETHERNET 14
+#define CLASSN 587
 
 typedef enum { P_TCP, P_UDP } Protocol;
-typedef enum { TCP, TCPSYN, TCPRST, UDP } PrimaryClass;
+typedef enum { TCP, TCPSYN, TCPRST, UDP } ProtocolFlag;
 
-PrimaryClass get_primary_class(Protocol proto, const struct sniff_tcp *tcp)
+// Information distributions:
+//    Protocol type (tcp, udp)   -- potentially include tcpack, tcprst, tcpsyn
+//    Service (destination port) -- potentially break up into classes
+//    Packet bytes
+
+typedef struct s_packet_distribution {
+    unsigned long long count;
+    unsigned long      classes [4 * CLASSN];
+} packet_distribution;
+
+ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
 {
     if (proto == P_UDP) {
         return UDP;
@@ -48,6 +59,22 @@ unsigned short get_secondary_class (unsigned short dst)
     } else {
         return 3;
     }
+}
+
+unsigned short primary_to_offset (ProtocolFlag  proto)
+{
+    switch (proto) {
+        case TCP:    return 0;
+        case UDP:    return 1;
+        case TCPSYN: return 2;
+        case TCPRST: return 3;
+    }
+}
+
+unsigned long get_class (Protocol proto, unsigned short port, const struct sniff_tcp *tcp)
+{
+    unsigned short offset = primary_to_offset(get_protocol_flag(proto, tcp));
+    return (offset * CLASSN) + get_secondary_class(port);
 }
 
 void print_hex(const unsigned char *s)
@@ -90,7 +117,7 @@ void process_tcp_packet (
     printf("   To              : %s\n", inet_ntoa(ip->ip_dst));
     printf("   Src port        : %d\n", ntohs(tcp->th_sport));
     printf("   Dst port        : %d\n", ntohs(tcp->th_dport));
-    printf("   Primary class   : %d\n", get_primary_class(P_TCP, tcp));
+    printf("   Primary class   : %d\n", get_protocol_flag(P_TCP, tcp));
     printf("   Secondary class : %d\n", get_secondary_class(ntohs(tcp->th_dport)));
     payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     print_hex (payload);
@@ -98,7 +125,7 @@ void process_tcp_packet (
 
 void process_udp_packet () {
     printf("   Protocol: UDP\n");
-    printf("   Primary class   : %d\n", get_primary_class(P_UDP, NULL));
+    printf("   Primary class   : %d\n", get_protocol_flag(P_UDP, NULL));
 }
 
 void process_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
@@ -142,6 +169,10 @@ int main(int argc, char **argv)
     const u_char *packet;
     struct pcap_pkthdr hdr;
     struct ether_header *eptr;
+    packet_distribution *distrib;
+
+
+    distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
 
     dev = pcap_lookupdev(errbuf);
     if (dev == NULL) {
@@ -157,5 +188,7 @@ int main(int argc, char **argv)
 
     pcap_loop(descr, -1, process_packet, NULL);
     printf("Done\n");
+
+    free (distrib);
     return 0;
 }
