@@ -10,7 +10,8 @@
 
 #include "defs.h"
 #define SIZE_ETHERNET 14
-#define CLASSN 587
+#define DSTN 587
+#define LENN 6
 
 typedef enum { P_TCP, P_UDP } Protocol;
 typedef enum { TCP, TCPSYN, TCPRST, UDP } ProtocolFlag;
@@ -19,11 +20,10 @@ typedef enum { TCP, TCPSYN, TCPRST, UDP } ProtocolFlag;
 //    Protocol type (tcp, udp)   -- potentially include tcpack, tcprst, tcpsyn
 //    Service (destination port) -- potentially break up into classes
 //    Packet bytes
-
 typedef struct s_packet_distribution {
-    unsigned long long count;
-    unsigned long dstport[CLASSN];
-    //unsigned long      classes [4 * CLASSN];
+    unsigned long count;
+    unsigned long dst_port_class[DSTN];
+    unsigned long pkt_len_class[LENN];
 } packet_distribution;
 
 ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
@@ -66,17 +66,17 @@ unsigned int get_packet_length_class (const struct pcap_pkthdr* pkthdr)
 {
     unsigned short caplen = pkthdr->caplen;
     if (caplen <= 64) {
-        return 1;
+        return 0;
     } else if (caplen < 128) {
-        return 2;
+        return 1;
     } else if (caplen < 255) {
-        return 3;
+        return 2;
     } else if (caplen < 512) {
-        return 4;
+        return 3;
     } else if (caplen < 1024) {
-        return 5;
+        return 4;
     } else {
-        return 6;
+        return 5;
     }
 }
 
@@ -108,6 +108,7 @@ void print_hex(const unsigned char *s)
 }
 
 void process_tcp_packet (
+        packet_distribution *distrib,
         const struct pcap_pkthdr* pkthdr,
         const u_char *packet,
         const struct sniff_ethernet *ethernet,
@@ -132,7 +133,10 @@ void process_tcp_packet (
         return;
     }
 
+    distrib->count++;
+
     printf("   Protocol: TCP\n");
+    printf("   Number of packets recorded: %lu\n", distrib->count);
     printf("   From            : %s\n", inet_ntoa(ip->ip_src));
     printf("   To              : %s\n", inet_ntoa(ip->ip_dst));
     printf("   Src port        : %d\n", ntohs(tcp->th_sport));
@@ -150,13 +154,15 @@ void process_udp_packet () {
 }
 
 void process_packet(
-        u_char *mycustom,
+        u_char *data,
         const struct pcap_pkthdr* pkthdr,
         const u_char* packet)
 {
     const struct sniff_ethernet *ethernet; /* The ethernet header */
     const struct sniff_ip *ip;             /* The IP header */
     u_int size_ip;
+    packet_distribution *distrib;
+    distrib = (packet_distribution *) data;
 
     ethernet = (struct sniff_ethernet*)(packet);
     ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
@@ -169,7 +175,7 @@ void process_packet(
 
     switch(ip->ip_p) {
         case IPPROTO_TCP:
-            process_tcp_packet(pkthdr, packet, ethernet, ip, size_ip);
+            process_tcp_packet(distrib, pkthdr, packet, ethernet, ip, size_ip);
             break;
         case IPPROTO_UDP:
             process_udp_packet();
@@ -192,8 +198,9 @@ int main(int argc, char **argv)
     const u_char *packet;
     struct pcap_pkthdr hdr;
     struct ether_header *eptr;
+    packet_distribution *distrib;
 
-    //distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
+    distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
 
     dev = pcap_lookupdev(errbuf);
     if (dev == NULL) {
@@ -207,11 +214,9 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    int mycustom = 5;
-
-    pcap_loop(descr, -1, process_packet, (u_char *)&mycustom);
+    pcap_loop(descr, -1, process_packet, (u_char *)distrib);
     printf("Done\n");
 
-    //free (distrib);
+    free (distrib);
     return 0;
 }
