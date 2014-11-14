@@ -13,13 +13,15 @@
 #define DSTN 587
 #define LENN 6
 
+// @see "A Network Anomaly Detection Method Based on Relative Entropy Theory" -- Ya-ling Zhang, Zhao-gou Han, Jiao-xia Ren
+
 typedef enum { P_TCP, P_UDP } Protocol;
 typedef enum { TCP, TCPSYN, TCPRST, UDP } ProtocolFlag;
 
 // Information distributions:
-//    Protocol type (tcp, udp)   -- potentially include tcpack, tcprst, tcpsyn
+//    Protocol type (tcp, udp)   -- potentially include tcpack, tcprst, tcpsyn (see get_protocol_flag)
 //    Service (destination port) -- potentially break up into classes
-//    Packet bytes
+//    Packet bytes               -- see length_class
 typedef struct s_packet_distribution {
     unsigned long count;
     unsigned long dst_port_class[DSTN];
@@ -62,6 +64,7 @@ unsigned short get_dest_port_class (unsigned short dst)
     }
 }
 
+// Split the packet length into well known classes
 unsigned int get_packet_length_class (const struct pcap_pkthdr* pkthdr)
 {
     unsigned short caplen = pkthdr->caplen;
@@ -80,26 +83,11 @@ unsigned int get_packet_length_class (const struct pcap_pkthdr* pkthdr)
     }
 }
 
-unsigned short primary_to_offset (ProtocolFlag  proto)
-{
-    switch (proto) {
-        case TCP:    return 0;
-        case UDP:    return 1;
-        case TCPSYN: return 2;
-        case TCPRST: return 3;
-    }
-}
-
-//unsigned long get_class (Protocol proto, unsigned short port, const struct sniff_tcp *tcp)
-//{
-//    unsigned short offset = primary_to_offset(get_protocol_flag(proto, tcp));
-//    return (offset * CLASSN) + get_dest_port_class(port);
-//}
-
+// Print only printable charcters in a string
 void print_hex(const unsigned char *s)
 {
     while (*s) {
-        if (' ' <= *s && '~' >= *s) {
+        if (10 == (unsigned char) *s || (' ' <= *s && '~' >= *s)) {
             printf("%c", *s);
         }
         *s++;
@@ -107,6 +95,7 @@ void print_hex(const unsigned char *s)
     printf("\n");
 }
 
+// Given a tcp packet, update the distribution information `distrib` with the correct classes
 void process_tcp_packet (
         packet_distribution *distrib,
         const struct pcap_pkthdr* pkthdr,
@@ -127,14 +116,19 @@ void process_tcp_packet (
         return;
     }
 
-    // TODO REMOVE THIS
-    //   Skip SSH traffic for now to remove feedback loop
+    // TODO REMOVE THIS -- Skip SSH traffic for now to remove feedback loop
     if (22 == ntohs(tcp->th_sport) || 22 == ntohs(tcp->th_dport)) {
         return;
     }
 
+    // TODO Update distrib with correct classes
     distrib->count++;
 
+    // TODO Make this cleaner (or remove?) to satisfy statistical output goals
+    //     - possible use ncurses to update view with updating distributions showing
+    //       contrast between trained distributions and current window distributions
+    //     - if using ncurses, or some real-time view, move this to process_packet
+    //       to avoid duplicating in udp()
     printf("   Protocol: TCP\n");
     printf("   Number of packets recorded: %lu\n", distrib->count);
     printf("   From            : %s\n", inet_ntoa(ip->ip_src));
@@ -148,11 +142,15 @@ void process_tcp_packet (
     print_hex (payload);
 }
 
+// Given a udp packet, update the distribution information `distrib` with the correct classes
 void process_udp_packet () {
+    // TODO Must update distribution information in same way as tcp()
     printf("   Protocol: UDP\n");
     printf("   Primary class   : %d\n", get_protocol_flag(P_UDP, NULL));
 }
 
+// Capture a packet from the network, switch on its protocol, and classify its distributoin information.
+// Finally, update the view with the new distributoin information.
 void process_packet(
         u_char *data,
         const struct pcap_pkthdr* pkthdr,
@@ -162,17 +160,21 @@ void process_packet(
     const struct sniff_ip *ip;             /* The IP header */
     u_int size_ip;
     packet_distribution *distrib;
+
+    // Obtain the running distributions from the data (@see s_packet_distribution)
     distrib = (packet_distribution *) data;
 
+    // Ensure correct packet length (throw away invalid packets)
+    // TODO - should the distribution of correct to incorrect packets be logged?
     ethernet = (struct sniff_ethernet*)(packet);
     ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
-
     size_ip = IP_HL(ip) * 4;
     if (size_ip < 20) {
         printf("   * Invalid IP header length: %u bytes\n", size_ip);
         return;
     }
 
+    // Dispatch to the correct protocol handler
     switch(ip->ip_p) {
         case IPPROTO_TCP:
             process_tcp_packet(distrib, pkthdr, packet, ethernet, ip, size_ip);
@@ -200,23 +202,29 @@ int main(int argc, char **argv)
     struct ether_header *eptr;
     packet_distribution *distrib;
 
+    // TODO Create baseline distributoin by training a distribution for a while
+
+    // Initialize the running distribution
     distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
 
+    // Find a device to sniff
     dev = pcap_lookupdev(errbuf);
     if (dev == NULL) {
         printf("%s\n", errbuf);
         exit(1);
     }
 
+    // Open the interface
     descr = pcap_open_live(dev, BUFSIZ, 0, -1, errbuf);
     if (descr == NULL) {
         printf("pcap_open_live(): %s\n", errbuf);
         exit(1);
     }
 
+    // Begin capturing packets
     pcap_loop(descr, -1, process_packet, (u_char *)distrib);
-    printf("Done\n");
 
+    // This will never be reached
     free (distrib);
     return 0;
 }
