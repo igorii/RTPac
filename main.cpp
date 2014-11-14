@@ -22,7 +22,8 @@ typedef enum { TCP, TCPSYN, TCPRST, UDP } ProtocolFlag;
 
 typedef struct s_packet_distribution {
     unsigned long long count;
-    unsigned long      classes [4 * CLASSN];
+    unsigned long dstport[CLASSN];
+    //unsigned long      classes [4 * CLASSN];
 } packet_distribution;
 
 ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
@@ -46,7 +47,7 @@ ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
 //          0     - 1023 (excluding 80)  -- Well Known Ports (divide into groups of 10)
 //          1024  - 49151                -- Registered Ports (divide into groups of 100)
 //          49152 - 65535                -- DynamicPrivate Ports
-unsigned short get_secondary_class (unsigned short dst)
+unsigned short get_dest_port_class (unsigned short dst)
 {
     if (dst == 80) {
         return 0;
@@ -61,6 +62,24 @@ unsigned short get_secondary_class (unsigned short dst)
     }
 }
 
+unsigned int get_packet_length_class (const struct pcap_pkthdr* pkthdr)
+{
+    unsigned short caplen = pkthdr->caplen;
+    if (caplen <= 64) {
+        return 1;
+    } else if (caplen < 128) {
+        return 2;
+    } else if (caplen < 255) {
+        return 3;
+    } else if (caplen < 512) {
+        return 4;
+    } else if (caplen < 1024) {
+        return 5;
+    } else {
+        return 6;
+    }
+}
+
 unsigned short primary_to_offset (ProtocolFlag  proto)
 {
     switch (proto) {
@@ -71,11 +90,11 @@ unsigned short primary_to_offset (ProtocolFlag  proto)
     }
 }
 
-unsigned long get_class (Protocol proto, unsigned short port, const struct sniff_tcp *tcp)
-{
-    unsigned short offset = primary_to_offset(get_protocol_flag(proto, tcp));
-    return (offset * CLASSN) + get_secondary_class(port);
-}
+//unsigned long get_class (Protocol proto, unsigned short port, const struct sniff_tcp *tcp)
+//{
+//    unsigned short offset = primary_to_offset(get_protocol_flag(proto, tcp));
+//    return (offset * CLASSN) + get_dest_port_class(port);
+//}
 
 void print_hex(const unsigned char *s)
 {
@@ -89,6 +108,7 @@ void print_hex(const unsigned char *s)
 }
 
 void process_tcp_packet (
+        const struct pcap_pkthdr* pkthdr,
         const u_char *packet,
         const struct sniff_ethernet *ethernet,
         const struct sniff_ip *ip,
@@ -118,7 +138,8 @@ void process_tcp_packet (
     printf("   Src port        : %d\n", ntohs(tcp->th_sport));
     printf("   Dst port        : %d\n", ntohs(tcp->th_dport));
     printf("   Primary class   : %d\n", get_protocol_flag(P_TCP, tcp));
-    printf("   Secondary class : %d\n", get_secondary_class(ntohs(tcp->th_dport)));
+    printf("   Secondary class : %d\n", get_dest_port_class(ntohs(tcp->th_dport)));
+    printf("   Length class    : %d\n", get_packet_length_class(pkthdr));
     payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     print_hex (payload);
 }
@@ -128,7 +149,9 @@ void process_udp_packet () {
     printf("   Primary class   : %d\n", get_protocol_flag(P_UDP, NULL));
 }
 
-void process_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
+void process_packet(
+        u_char *mycustom,
+        const struct pcap_pkthdr* pkthdr,
         const u_char* packet)
 {
     const struct sniff_ethernet *ethernet; /* The ethernet header */
@@ -146,7 +169,7 @@ void process_packet(u_char *useless, const struct pcap_pkthdr* pkthdr,
 
     switch(ip->ip_p) {
         case IPPROTO_TCP:
-            process_tcp_packet(packet, ethernet, ip, size_ip);
+            process_tcp_packet(pkthdr, packet, ethernet, ip, size_ip);
             break;
         case IPPROTO_UDP:
             process_udp_packet();
@@ -169,10 +192,8 @@ int main(int argc, char **argv)
     const u_char *packet;
     struct pcap_pkthdr hdr;
     struct ether_header *eptr;
-    packet_distribution *distrib;
 
-
-    distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
+    //distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
 
     dev = pcap_lookupdev(errbuf);
     if (dev == NULL) {
@@ -186,9 +207,11 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    pcap_loop(descr, -1, process_packet, NULL);
+    int mycustom = 5;
+
+    pcap_loop(descr, -1, process_packet, (u_char *)&mycustom);
     printf("Done\n");
 
-    free (distrib);
+    //free (distrib);
     return 0;
 }
