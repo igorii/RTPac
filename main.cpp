@@ -9,6 +9,7 @@
 #include <set>
 
 #include "defs.h"
+#include "entropy.h"
 #define SIZE_ETHERNET 14
 #define DSTN 587
 #define LENN 6
@@ -206,6 +207,7 @@ void process_packet(
         return;
     }
 
+    // TODO Update protocol independent distribution classes
     distrib->count++;
 
     // Dispatch to the correct protocol handler
