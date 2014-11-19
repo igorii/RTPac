@@ -64,6 +64,28 @@ unsigned short get_dest_port_class (unsigned short dst)
     }
 }
 
+unsigned short get_most_active_dst_port_class(packet_distribution *distrib)
+{
+    int i, max = distrib->dst_port_class[0];
+    for (i = 0; i < DSTN; ++i) {
+        if (distrib->dst_port_class[i] > distrib->dst_port_class[max]) {
+            max = i;
+        }
+    }
+    return max;
+}
+
+unsigned short get_most_active_pkt_len_class(packet_distribution *distrib)
+{
+    int i, max = 0;
+    for (i = 0; i < LENN; ++i) {
+        if (distrib->pkt_len_class[i] > distrib->pkt_len_class[max]) {
+            max = i;
+        }
+    }
+    return max;
+}
+
 // Split the packet length into well known classes
 unsigned int get_packet_length_class (const struct pcap_pkthdr* pkthdr)
 {
@@ -122,7 +144,8 @@ void process_tcp_packet (
     }
 
     // TODO Update distrib with correct classes
-    distrib->count++;
+    distrib->dst_port_class[(get_dest_port_class(ntohs(tcp->th_dport)))]++;
+    distrib->pkt_len_class[(get_packet_length_class(pkthdr))]++;
 
     // TODO Make this cleaner (or remove?) to satisfy statistical output goals
     //     - possible use ncurses to update view with updating distributions showing
@@ -138,6 +161,15 @@ void process_tcp_packet (
     printf("   Primary class   : %d\n", get_protocol_flag(P_TCP, tcp));
     printf("   Secondary class : %d\n", get_dest_port_class(ntohs(tcp->th_dport)));
     printf("   Length class    : %d\n", get_packet_length_class(pkthdr));
+
+    printf("   Most active dst : %d (%f)\n",
+            get_most_active_dst_port_class(distrib),
+            ((double) distrib->pkt_len_class[get_most_active_dst_port_class(distrib)]) / distrib->count);
+
+    printf("   Most active len : %d (%f)\n",
+            get_most_active_pkt_len_class(distrib),
+            ((double) distrib->pkt_len_class[get_most_active_pkt_len_class(distrib)]) / distrib->count);
+
     payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     print_hex (payload);
 }
@@ -174,6 +206,8 @@ void process_packet(
         return;
     }
 
+    distrib->count++;
+
     // Dispatch to the correct protocol handler
     switch(ip->ip_p) {
         case IPPROTO_TCP:
@@ -202,7 +236,7 @@ int main(int argc, char **argv)
     struct ether_header *eptr;
     packet_distribution *distrib;
 
-    // TODO Create baseline distributoin by training a distribution for a while
+    // TODO Create baseline distribution by training a distribution for a while
 
     // Initialize the running distribution
     distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
