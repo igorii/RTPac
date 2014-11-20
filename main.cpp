@@ -10,6 +10,7 @@
 
 #include "defs.h"
 #include "entropy.h"
+
 #define SIZE_ETHERNET 14
 #define DSTN 587
 #define LENN 6
@@ -145,6 +146,7 @@ void process_tcp_packet (
     }
 
     // TODO Update distrib with correct classes
+    distrib->count++;
     distrib->dst_port_class[(get_dest_port_class(ntohs(tcp->th_dport)))]++;
     distrib->pkt_len_class[(get_packet_length_class(pkthdr))]++;
 
@@ -163,6 +165,7 @@ void process_tcp_packet (
     printf("   Secondary class : %d\n", get_dest_port_class(ntohs(tcp->th_dport)));
     printf("   Length class    : %d\n", get_packet_length_class(pkthdr));
 
+
     printf("   Most active dst : %d (%f)\n",
             get_most_active_dst_port_class(distrib),
             ((double) distrib->pkt_len_class[get_most_active_dst_port_class(distrib)]) / distrib->count);
@@ -170,6 +173,12 @@ void process_tcp_packet (
     printf("   Most active len : %d (%f)\n",
             get_most_active_pkt_len_class(distrib),
             ((double) distrib->pkt_len_class[get_most_active_pkt_len_class(distrib)]) / distrib->count);
+
+    printf("   Dst Entropy            : %f\n",
+            entropy_of_distribution(distrib->count, distrib->dst_port_class, DSTN));
+
+    printf("   Pkt Length Entropy     : %f\n",
+            entropy_of_distribution(distrib->count, distrib->pkt_len_class, LENN));
 
     payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     print_hex (payload);
@@ -208,7 +217,6 @@ void process_packet(
     }
 
     // TODO Update protocol independent distribution classes
-    distrib->count++;
 
     // Dispatch to the correct protocol handler
     switch(ip->ip_p) {
@@ -219,6 +227,7 @@ void process_packet(
             process_udp_packet();
             break;
         case IPPROTO_ICMP:
+            printf("TODO ICMP\n");
             return;
         case IPPROTO_IP:
             return;
