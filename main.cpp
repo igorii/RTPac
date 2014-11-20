@@ -14,7 +14,8 @@
 #include "entropy.h"
 
 #define SIZE_ETHERNET 14
-#define DSTN 587
+#define CDSTN 587
+#define DSTN 65536
 #define LENN 6
 #define PFLN 4
 
@@ -29,7 +30,8 @@ typedef enum { TCP, TCPSYN, TCPRST, UDP } ProtocolFlag;
 //    Packet bytes               -- see length_class
 typedef struct s_packet_distribution {
     unsigned long count;
-    unsigned long dst_port_class[DSTN];
+    unsigned long dst_port_class[CDSTN];
+    unsigned long dst_port[DSTN];
     unsigned long pkt_len_class[LENN];
     unsigned long protocol_flag_class[PFLN];
 } packet_distribution;
@@ -55,7 +57,7 @@ ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
 //          0     - 1023 (excluding 80)  -- Well Known Ports (divide into groups of 10)
 //          1024  - 49151                -- Registered Ports (divide into groups of 100)
 //          49152 - 65535                -- DynamicPrivate Ports
-unsigned short get_dest_port_class (unsigned short dst)
+unsigned short get_dst_port_class (unsigned short dst)
 {
     if (dst == 80) {
         return 0;
@@ -73,7 +75,7 @@ unsigned short get_dest_port_class (unsigned short dst)
 unsigned short get_most_active_dst_port_class(packet_distribution *distrib)
 {
     int i, max = distrib->dst_port_class[0];
-    for (i = 0; i < DSTN; ++i) {
+    for (i = 0; i < CDSTN; ++i) {
         if (distrib->dst_port_class[i] > distrib->dst_port_class[max]) {
             max = i;
         }
@@ -151,10 +153,10 @@ void process_tcp_packet (
 
     // TODO Update distrib with correct classes
     distrib->count++;
-    distrib->dst_port_class[(get_dest_port_class(ntohs(tcp->th_dport)))]++;
-    distrib->pkt_len_class[(get_packet_length_class(pkthdr))]++;
+    distrib->dst_port_class[(get_dst_port_class(ntohs(tcp->th_dport)))]++;
     distrib->pkt_len_class[(get_packet_length_class(pkthdr))]++;
     distrib->protocol_flag_class[(get_protocol_flag(P_TCP, tcp))]++;
+    distrib->dst_port[ntohs(tcp->th_dport)]++;
 
     // TODO Make this cleaner (or remove?) to satisfy statistical output goals
     //     - possible use ncurses to update view with updating distributions showing
@@ -168,29 +170,37 @@ void process_tcp_packet (
     printf("   Src port        : %d\n", ntohs(tcp->th_sport));
     printf("   Dst port        : %d\n", ntohs(tcp->th_dport));
     printf("   Primary class   : %d\n", get_protocol_flag(P_TCP, tcp));
-    printf("   Secondary class : %d\n", get_dest_port_class(ntohs(tcp->th_dport)));
+    printf("   Secondary class : %d\n", get_dst_port_class(ntohs(tcp->th_dport)));
     printf("   Length class    : %d\n", get_packet_length_class(pkthdr));
 
 
     printf("   Most active dst : %d (%f)\n",
             get_most_active_dst_port_class(distrib),
-            element_frequency(distrib->dst_port_class[get_most_active_dst_port_class(distrib)], distrib->count));
+            element_frequency(distrib->dst_port_class[
+                  get_most_active_dst_port_class(distrib)
+                ], distrib->count));
 
     printf("   Most active len : %d (%f)\n",
             get_most_active_pkt_len_class(distrib),
-            element_frequency(distrib->pkt_len_class[get_most_active_pkt_len_class(distrib)], distrib->count));
+            element_frequency(distrib->pkt_len_class[
+                  get_most_active_pkt_len_class(distrib)
+                ], distrib->count));
 
-    printf("   Dst Entropy            : %f\n",
+    printf("   Dst Class Entropy        : %f\n",
             entropy_of_distribution(distrib->count,
-                distrib->dst_port_class, DSTN));
+                distrib->dst_port_class, CDSTN));
 
-    printf("   Pkt Length Entropy     : %f\n",
+    printf("   Pkt Length Entropy       : %f\n",
             entropy_of_distribution(distrib->count,
                 distrib->pkt_len_class, LENN));
 
-    printf("   Protocol Flag  Entropy : %f\n",
+    printf("   Protocol Flag  Entropy   : %f\n",
             entropy_of_distribution(distrib->count,
                 distrib->protocol_flag_class, PFLN));
+
+    printf("   Destination Port Entropy : %f\n",
+            entropy_of_distribution(distrib->count,
+                distrib->dst_port, DSTN));
 
     payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     print_hex (payload);
