@@ -23,7 +23,7 @@ double entropy_of_distribution (
         )
 {
     int i;
-    double sum, freq;
+    double sum = 0, freq;
     for (i = 0; i < classes; ++i) {
         freq = element_frequency(distribution[i], count);
         sum += freq * safe_log(freq);
@@ -41,7 +41,7 @@ double relative_entropy (
         )
 {
     int i;
-    double sum, freq1, freq2;
+    double sum = 0, freq1, freq2;
 
     for (i = 0; i < classes; ++i) {
         freq1 = element_frequency(distribution1[i], count1);

@@ -19,6 +19,9 @@
 #define LENN 6
 #define PFLN 4
 
+// TODO move this into the user data passed to pcap loop
+pcap_t* descr;
+
 // @see "A Network Anomaly Detection Method Based on Relative Entropy Theory" -- Ya-ling Zhang, Zhao-gou Han, Jiao-xia Ren
 
 typedef enum { P_TCP, P_UDP } Protocol;
@@ -163,47 +166,47 @@ void process_tcp_packet (
     //       contrast between trained distributions and current window distributions
     //     - if using ncurses, or some real-time view, move this to process_packet
     //       to avoid duplicating in udp()
-    printf("   Protocol: TCP\n");
+//    printf("   Protocol: TCP\n");
     printf("   Number of packets recorded: %lu\n", distrib->count);
-    printf("   From            : %s\n", inet_ntoa(ip->ip_src));
-    printf("   To              : %s\n", inet_ntoa(ip->ip_dst));
-    printf("   Src port        : %d\n", ntohs(tcp->th_sport));
-    printf("   Dst port        : %d\n", ntohs(tcp->th_dport));
-    printf("   Primary class   : %d\n", get_protocol_flag(P_TCP, tcp));
-    printf("   Secondary class : %d\n", get_dst_port_class(ntohs(tcp->th_dport)));
-    printf("   Length class    : %d\n", get_packet_length_class(pkthdr));
-
-
-    printf("   Most active dst : %d (%f)\n",
-            get_most_active_dst_port_class(distrib),
-            element_frequency(distrib->dst_port_class[
-                  get_most_active_dst_port_class(distrib)
-                ], distrib->count));
-
-    printf("   Most active len : %d (%f)\n",
-            get_most_active_pkt_len_class(distrib),
-            element_frequency(distrib->pkt_len_class[
-                  get_most_active_pkt_len_class(distrib)
-                ], distrib->count));
-
-    printf("   Dst Class Entropy        : %f\n",
-            entropy_of_distribution(distrib->count,
-                distrib->dst_port_class, CDSTN));
-
-    printf("   Pkt Length Entropy       : %f\n",
-            entropy_of_distribution(distrib->count,
-                distrib->pkt_len_class, LENN));
-
-    printf("   Protocol Flag  Entropy   : %f\n",
-            entropy_of_distribution(distrib->count,
-                distrib->protocol_flag_class, PFLN));
-
-    printf("   Destination Port Entropy : %f\n",
-            entropy_of_distribution(distrib->count,
-                distrib->dst_port, DSTN));
-
-    payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
-    print_hex (payload);
+//    printf("   From            : %s\n", inet_ntoa(ip->ip_src));
+//    printf("   To              : %s\n", inet_ntoa(ip->ip_dst));
+//    printf("   Src port        : %d\n", ntohs(tcp->th_sport));
+//    printf("   Dst port        : %d\n", ntohs(tcp->th_dport));
+//    printf("   Primary class   : %d\n", get_protocol_flag(P_TCP, tcp));
+//    printf("   Secondary class : %d\n", get_dst_port_class(ntohs(tcp->th_dport)));
+//    printf("   Length class    : %d\n", get_packet_length_class(pkthdr));
+//
+//
+//    printf("   Most active dst : %d (%f)\n",
+//            get_most_active_dst_port_class(distrib),
+//            element_frequency(distrib->dst_port_class[
+//                  get_most_active_dst_port_class(distrib)
+//                ], distrib->count));
+//
+//    printf("   Most active len : %d (%f)\n",
+//            get_most_active_pkt_len_class(distrib),
+//            element_frequency(distrib->pkt_len_class[
+//                  get_most_active_pkt_len_class(distrib)
+//                ], distrib->count));
+//
+//    printf("   Dst Class Entropy        : %f\n",
+//            entropy_of_distribution(distrib->count,
+//                distrib->dst_port_class, CDSTN));
+//
+//    printf("   Pkt Length Entropy       : %f\n",
+//            entropy_of_distribution(distrib->count,
+//                distrib->pkt_len_class, LENN));
+//
+//    printf("   Protocol Flag  Entropy   : %f\n",
+//            entropy_of_distribution(distrib->count,
+//                distrib->protocol_flag_class, PFLN));
+//
+//    printf("   Destination Port Entropy : %f\n",
+//            entropy_of_distribution(distrib->count,
+//                distrib->dst_port, DSTN));
+//
+//    payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
+    //print_hex (payload);
 }
 
 // Given a udp packet, update the distribution information `distrib` with the correct classes
@@ -256,6 +259,12 @@ void process_packet(
         default:
             return;
     }
+
+    // TODO remove magic Number
+    // stop capturing at the window limit
+    if (distrib->count >= 1000) {
+        pcap_breakloop(descr);
+    }
 }
 
 int main(int argc, char **argv)
@@ -263,17 +272,20 @@ int main(int argc, char **argv)
     int i;
     char *dev;
     char errbuf[PCAP_ERRBUF_SIZE];
-    pcap_t* descr;
+//    pcap_t* descr;
     const u_char *packet;
     struct pcap_pkthdr hdr;
     struct ether_header *eptr;
-    packet_distribution *distrib;
-
-    // TODO Create baseline distribution by training a distribution for a while
+    packet_distribution *baseline_distribution;
+    packet_distribution *window_distribution;
+    double sum;
+    //int window_size_in_pkts = 1000;
 
     // Initialize the running distribution
-    distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
-    bzero(distrib, sizeof (distrib));
+    baseline_distribution = (packet_distribution *) malloc ( sizeof (packet_distribution) );
+    window_distribution   = (packet_distribution *) malloc ( sizeof (packet_distribution) );
+    bzero(baseline_distribution, sizeof (packet_distribution));
+    bzero(window_distribution,   sizeof (packet_distribution));
 
     // Find a device to sniff
     dev = pcap_lookupdev(errbuf);
@@ -289,10 +301,48 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    // Begin capturing packets
-    pcap_loop(descr, -1, process_packet, (u_char *)distrib);
+    // Begin capturing packets for baseline behaviour
+    pcap_loop(descr, -1, process_packet, (u_char *)baseline_distribution);
+
+    printf ("\nFinished capturing baseline behaviour.\n\n");
+
+    // Begin capturing window distributions and comparing every `window_size_in_pkts` many captures
+    for (;;) {
+        printf ("\nBeginning windowed capture...\n\n");
+        pcap_loop(descr, -1, process_packet, (u_char *)window_distribution);
+        // TODO compare baseline and window distributions and alert if necessary
+
+        printf("Dst Class difference: %f\n",
+                relative_entropy (baseline_distribution->count, baseline_distribution->dst_port_class,
+                                  window_distribution->count,   window_distribution->dst_port_class,
+                                  CDSTN));
+
+        printf("Dst Port difference: %f\n",
+                relative_entropy (baseline_distribution->count, baseline_distribution->dst_port,
+                                  window_distribution->count,   window_distribution->dst_port,
+                                  DSTN));
+
+        printf("Packet Len difference: %f\n",
+                relative_entropy (baseline_distribution->count, baseline_distribution->pkt_len_class,
+                                  window_distribution->count,   window_distribution->pkt_len_class,
+                                  LENN));
+
+        printf("Protocol flag difference: %f\n",
+                relative_entropy (baseline_distribution->count, baseline_distribution->protocol_flag_class,
+                                  window_distribution->count,   window_distribution->protocol_flag_class,
+                                  PFLN));
+
+
+        // TODO - sanity check, ensure all probability vectors sum to 1
+        //        Kullback-Leibler divergence is only defined at this point
+
+
+        // Reset the window distribution
+        bzero(window_distribution, sizeof (packet_distribution));
+    }
 
     // This will never be reached
-    free (distrib);
+    free (baseline_distribution);
+    free (window_distribution);
     return 0;
 }
