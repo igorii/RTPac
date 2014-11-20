@@ -7,6 +7,8 @@
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
 #include <set>
+#include <stdlib.h>
+#include <string.h>
 
 #include "defs.h"
 #include "entropy.h"
@@ -14,6 +16,7 @@
 #define SIZE_ETHERNET 14
 #define DSTN 587
 #define LENN 6
+#define PFLN 4
 
 // @see "A Network Anomaly Detection Method Based on Relative Entropy Theory" -- Ya-ling Zhang, Zhao-gou Han, Jiao-xia Ren
 
@@ -28,6 +31,7 @@ typedef struct s_packet_distribution {
     unsigned long count;
     unsigned long dst_port_class[DSTN];
     unsigned long pkt_len_class[LENN];
+    unsigned long protocol_flag_class[PFLN];
 } packet_distribution;
 
 ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
@@ -149,6 +153,8 @@ void process_tcp_packet (
     distrib->count++;
     distrib->dst_port_class[(get_dest_port_class(ntohs(tcp->th_dport)))]++;
     distrib->pkt_len_class[(get_packet_length_class(pkthdr))]++;
+    distrib->pkt_len_class[(get_packet_length_class(pkthdr))]++;
+    distrib->protocol_flag_class[(get_protocol_flag(P_TCP, tcp))]++;
 
     // TODO Make this cleaner (or remove?) to satisfy statistical output goals
     //     - possible use ncurses to update view with updating distributions showing
@@ -168,17 +174,23 @@ void process_tcp_packet (
 
     printf("   Most active dst : %d (%f)\n",
             get_most_active_dst_port_class(distrib),
-            ((double) distrib->pkt_len_class[get_most_active_dst_port_class(distrib)]) / distrib->count);
+            element_frequency(distrib->dst_port_class[get_most_active_dst_port_class(distrib)], distrib->count));
 
     printf("   Most active len : %d (%f)\n",
             get_most_active_pkt_len_class(distrib),
-            ((double) distrib->pkt_len_class[get_most_active_pkt_len_class(distrib)]) / distrib->count);
+            element_frequency(distrib->pkt_len_class[get_most_active_pkt_len_class(distrib)], distrib->count));
 
     printf("   Dst Entropy            : %f\n",
-            entropy_of_distribution(distrib->count, distrib->dst_port_class, DSTN));
+            entropy_of_distribution(distrib->count,
+                distrib->dst_port_class, DSTN));
 
     printf("   Pkt Length Entropy     : %f\n",
-            entropy_of_distribution(distrib->count, distrib->pkt_len_class, LENN));
+            entropy_of_distribution(distrib->count,
+                distrib->pkt_len_class, LENN));
+
+    printf("   Protocol Flag  Entropy : %f\n",
+            entropy_of_distribution(distrib->count,
+                distrib->protocol_flag_class, PFLN));
 
     payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     print_hex (payload);
@@ -251,6 +263,7 @@ int main(int argc, char **argv)
 
     // Initialize the running distribution
     distrib = (packet_distribution *) malloc ( sizeof (packet_distribution) );
+    bzero(distrib, sizeof (distrib));
 
     // Find a device to sniff
     dev = pcap_lookupdev(errbuf);
