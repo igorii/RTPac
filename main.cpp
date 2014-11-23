@@ -385,11 +385,11 @@ int main(int argc, char **argv)
             // The distribution is correct in this case, so proceed...
             // Calculate the relative entropy of the two distributions
             // TODO - alert when entropy divergence is large enough
-            relative_entropy_of_distributions(baseline_distribution, window_distribution);
+            relative_entropy_of_distributions(window_distribution, baseline_distribution);
             printf("NRNE: %lf\n",
                     normalized_relative_network_entropy(
-                        baseline_distribution,
-                        window_distribution));
+                        window_distribution,
+                        baseline_distribution));
         }
 
         // Reset the window distribution

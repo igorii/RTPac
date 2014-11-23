@@ -5,7 +5,7 @@ double safe_log (double x)
 {
     double rlt = log (x);
     if (isfinite(rlt)) {
-        return rlt; // Convert to base 2
+        return rlt / log (2); // Convert to base 2
     } else {
         return 0;
     }
@@ -50,8 +50,9 @@ double relative_entropy (
     for (i = 0; i < classes; ++i) {
         freq1 = element_frequency(distribution1[i], count1);
         freq2 = element_frequency(distribution2[i], count2);
-        sum += freq1 * safe_log ( safe_div ( freq1, freq2 ) );
+        sum  += freq1 * safe_log ( safe_div ( freq1, freq2 ) );
     }
 
     return sum;
 }
+
