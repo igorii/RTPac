@@ -11,6 +11,12 @@ double safe_log (double x)
     }
 }
 
+double safe_div (double a, double b)
+{
+    if (b == 0) return 0;
+    else        return a / b;
+}
+
 double element_frequency (unsigned long occurrences, unsigned long count)
 {
     return ((double) occurrences) / count;
@@ -46,7 +52,7 @@ double relative_entropy (
     for (i = 0; i < classes; ++i) {
         freq1 = element_frequency(distribution1[i], count1);
         freq2 = element_frequency(distribution2[i], count2);
-        sum += freq1 * safe_log ( freq1 / freq2 );
+        sum += freq1 * safe_log ( safe_div ( freq1, freq2 ) );
     }
 
     return 0 - sum;
