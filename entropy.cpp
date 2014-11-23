@@ -5,7 +5,7 @@ double safe_log (double x)
 {
     double rlt = log (x);
     if (isfinite(rlt)) {
-        return rlt / log (2);  // Convert to base 2
+        return rlt; // Convert to base 2
     } else {
         return 0;
     }
@@ -25,8 +25,7 @@ double element_frequency (unsigned long occurrences, unsigned long count)
 double entropy_of_distribution (
         unsigned long  count,
         unsigned long *distribution,
-        unsigned long  classes
-        )
+        unsigned long  classes)
 {
     int i;
     double sum = 0, freq;
@@ -43,8 +42,7 @@ double relative_entropy (
         unsigned long *distribution1,
         unsigned long  count2,
         unsigned long *distribution2,
-        unsigned long  classes
-        )
+        unsigned long  classes)
 {
     int i;
     double sum = 0, freq1, freq2;
@@ -55,5 +53,5 @@ double relative_entropy (
         sum += freq1 * safe_log ( safe_div ( freq1, freq2 ) );
     }
 
-    return 0 - sum;
+    return sum;
 }

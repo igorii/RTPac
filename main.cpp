@@ -39,6 +39,23 @@ typedef struct s_packet_distribution {
     unsigned long protocol_flag_class[PFLN];
 } packet_distribution;
 
+// Average the relative entropies of all distributions in two classes
+double normalized_relative_network_entropy (
+        packet_distribution *distrib1,
+        packet_distribution *distrib2)
+{
+    double sum = 0;
+    sum += relative_entropy (distrib1->count, distrib1->dst_port_class,
+            distrib2->count, distrib2->dst_port_class, CDSTN);
+    sum += relative_entropy (distrib1->count, distrib1->dst_port,
+            distrib2->count, distrib2->dst_port, DSTN);
+    sum += relative_entropy (distrib1->count, distrib1->pkt_len_class,
+            distrib2->count, distrib2->pkt_len_class, LENN);
+    sum += relative_entropy (distrib1->count, distrib1->protocol_flag_class,
+            distrib2->count, distrib2->protocol_flag_class, PFLN);
+    return sum / 4;
+}
+
 ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
 {
     if (proto == P_UDP) {
@@ -285,29 +302,29 @@ unsigned char sanity_check_distribution (packet_distribution *distrib)
 {
     // All sums should be 1
     return (0.0001 > 1 - sanity_check_probabilities (CDSTN,
-               distrib->count, distrib->dst_port_class) &&
+                distrib->count, distrib->dst_port_class) &&
             0.0001 > 1 - sanity_check_probabilities (DSTN,
-               distrib->count, distrib->dst_port) &&
+                distrib->count, distrib->dst_port) &&
             0.0001 > 1 - sanity_check_probabilities (PFLN,
-               distrib->count, distrib->protocol_flag_class) &&
+                distrib->count, distrib->protocol_flag_class) &&
             0.0001 > 1 - sanity_check_probabilities (LENN,
-               distrib->count, distrib->pkt_len_class));
+                distrib->count, distrib->pkt_len_class));
 }
 
 void relative_entropy_of_distributions (packet_distribution *distrib1, packet_distribution *distrib2)
 {
     printf("Dst Class difference    : %f\n"
-           "Dst Port difference     : %f\n"
-           "Packet Len difference   : %f\n"
-           "Protocol flag difference: %f\n",
-           relative_entropy (distrib1->count, distrib1->dst_port_class,
-               distrib2->count, distrib2->dst_port_class, CDSTN),
-           relative_entropy (distrib1->count, distrib1->dst_port,
-               distrib2->count, distrib2->dst_port, DSTN),
-           relative_entropy (distrib1->count, distrib1->pkt_len_class,
-               distrib2->count, distrib2->pkt_len_class, LENN),
-           relative_entropy (distrib1->count, distrib1->protocol_flag_class,
-               distrib2->count, distrib2->protocol_flag_class, PFLN));
+            "Dst Port difference     : %f\n"
+            "Packet Len difference   : %f\n"
+            "Protocol flag difference: %f\n",
+            relative_entropy (distrib1->count, distrib1->dst_port_class,
+                distrib2->count, distrib2->dst_port_class, CDSTN),
+            relative_entropy (distrib1->count, distrib1->dst_port,
+                distrib2->count, distrib2->dst_port, DSTN),
+            relative_entropy (distrib1->count, distrib1->pkt_len_class,
+                distrib2->count, distrib2->pkt_len_class, LENN),
+            relative_entropy (distrib1->count, distrib1->protocol_flag_class,
+                distrib2->count, distrib2->protocol_flag_class, PFLN));
 }
 
 int main(int argc, char **argv)
@@ -369,6 +386,10 @@ int main(int argc, char **argv)
             // Calculate the relative entropy of the two distributions
             // TODO - alert when entropy divergence is large enough
             relative_entropy_of_distributions(baseline_distribution, window_distribution);
+            printf("NRNE: %lf\n",
+                    normalized_relative_network_entropy(
+                        baseline_distribution,
+                        window_distribution));
         }
 
         // Reset the window distribution
