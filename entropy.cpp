@@ -56,3 +56,23 @@ double relative_entropy (
     return sum;
 }
 
+double root_mean_square_error (
+        unsigned long  count1,
+        unsigned long *distribution1,
+        unsigned long  count2,
+        unsigned long *distribution2,
+        unsigned long  classes)
+{
+    int i;
+    double freq1, freq2;
+    double sum;
+
+    for (i = 0; i < classes; ++i) {
+        freq1 = element_frequency(distribution1[i], count1);
+        freq2 = element_frequency(distribution2[i], count2);
+        sum += pow(freq1 - freq2, 2);
+    }
+
+    return sqrt(sum / classes);
+}
+

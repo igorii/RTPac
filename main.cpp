@@ -9,6 +9,7 @@
 #include <set>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "defs.h"
 #include "entropy.h"
@@ -37,7 +38,27 @@ typedef struct s_packet_distribution {
     unsigned long dst_port[DSTN];
     unsigned long pkt_len_class[LENN];
     unsigned long protocol_flag_class[PFLN];
+    double mean;
+    double standard_deviation;
 } packet_distribution;
+
+void print_distribution (packet_distribution *distrib)
+{
+    int i;
+    printf("Distribution(count=%lu)\n"
+           "    Packet Length: ", distrib->count);
+
+    for (i = 0; i < LENN; ++i) {
+        printf("  %d(%lu)", i, distrib->pkt_len_class[i]);
+    }
+
+    printf("\n    Protocol Flag:");
+    for (i = 0; i < PFLN; ++i) {
+        printf("  %d(%lu)", i, distrib->protocol_flag_class[i]);
+    }
+    printf("\n");
+
+}
 
 // Average the relative entropies of all distributions in two classes
 double normalized_relative_network_entropy (
@@ -45,15 +66,11 @@ double normalized_relative_network_entropy (
         packet_distribution *distrib2)
 {
     double sum = 0;
-    sum += relative_entropy (distrib1->count, distrib1->dst_port_class,
-            distrib2->count, distrib2->dst_port_class, CDSTN);
-    sum += relative_entropy (distrib1->count, distrib1->dst_port,
-            distrib2->count, distrib2->dst_port, DSTN);
     sum += relative_entropy (distrib1->count, distrib1->pkt_len_class,
             distrib2->count, distrib2->pkt_len_class, LENN);
     sum += relative_entropy (distrib1->count, distrib1->protocol_flag_class,
             distrib2->count, distrib2->protocol_flag_class, PFLN);
-    return sum / 4;
+    return sum / 2;
 }
 
 ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
@@ -100,6 +117,7 @@ unsigned short get_most_active_dst_port_class(packet_distribution *distrib)
             max = i;
         }
     }
+
     return max;
 }
 
@@ -111,6 +129,7 @@ unsigned short get_most_active_pkt_len_class(packet_distribution *distrib)
             max = i;
         }
     }
+
     return max;
 }
 
@@ -152,8 +171,7 @@ void process_tcp_packet (
         const u_char *packet,
         const struct sniff_ethernet *ethernet,
         const struct sniff_ip *ip,
-        const u_int size_ip
-        )
+        const u_int size_ip)
 {
     const struct sniff_tcp *tcp;           /* The TCP header */
     const unsigned char *payload;          /* Packet payload */
@@ -184,7 +202,8 @@ void process_tcp_packet (
     //     - if using ncurses, or some real-time view, move this to process_packet
     //       to avoid duplicating in udp()
     //    printf("   Protocol: TCP\n");
-    printf("   Number of packets recorded: %lu\n", distrib->count);
+    if (distrib->count % 50 == 0)
+        printf("   Number of packets recorded: %lu\n", distrib->count);
     //    printf("   From            : %s\n", inet_ntoa(ip->ip_src));
     //    printf("   To              : %s\n", inet_ntoa(ip->ip_dst));
     //    printf("   Src port        : %d\n", ntohs(tcp->th_sport));
@@ -287,8 +306,7 @@ void process_packet(
 double sanity_check_probabilities (
         unsigned long classes,
         unsigned long count,
-        unsigned long *distrib
-        )
+        unsigned long *distrib)
 {
     int i;
     double sum = 0;
@@ -301,13 +319,13 @@ double sanity_check_probabilities (
 unsigned char sanity_check_distribution (packet_distribution *distrib)
 {
     // All sums should be 1
-    return (0.0001 > 1 - sanity_check_probabilities (CDSTN,
+    return (0.001 > 1 - sanity_check_probabilities (CDSTN,
                 distrib->count, distrib->dst_port_class) &&
-            0.0001 > 1 - sanity_check_probabilities (DSTN,
+            0.001 > 1 - sanity_check_probabilities (DSTN,
                 distrib->count, distrib->dst_port) &&
-            0.0001 > 1 - sanity_check_probabilities (PFLN,
+            0.001 > 1 - sanity_check_probabilities (PFLN,
                 distrib->count, distrib->protocol_flag_class) &&
-            0.0001 > 1 - sanity_check_probabilities (LENN,
+            0.001 > 1 - sanity_check_probabilities (LENN,
                 distrib->count, distrib->pkt_len_class));
 }
 
@@ -327,24 +345,81 @@ void relative_entropy_of_distributions (packet_distribution *distrib1, packet_di
                 distrib2->count, distrib2->protocol_flag_class, PFLN));
 }
 
-int main(int argc, char **argv)
+double mean (double *distribution, int num)
+{
+    double sum = 0;
+    int i;
+
+    for (i = 0; i < num; ++i)
+        sum += distribution[i];
+
+    return sum / num;
+}
+
+double square_difference (double a, double b)
+{
+    return pow(a - b, 2);
+}
+
+double std_dev(double *distribution, int num)
+{
+    double mean_ = 0;
+    double squares[num];
+    int i;
+
+    mean_ = mean(distribution, num);
+
+    for (i = 0; i < num; ++i)
+        squares[i] = square_difference (distribution[i], mean_);
+
+    return mean(squares, num);
+}
+
+void capture_regular_deviation(packet_distribution *baseline, int num_windows)
 {
     int i;
+    double window_history[num_windows];
+    unsigned char distribution_correct;
+    packet_distribution window;
+
+    for (i = 0; i < num_windows; ++i) {
+        bzero(&window, sizeof (packet_distribution));
+        printf ("\nBeginning window %d capture of baseline...\n\n", i);
+        pcap_loop(descr, -1, process_packet, (u_char *)&window);
+
+        // Sanity check, ensure all probability vectors sum to 1
+        //        Kullback-Leibler divergence is only defined at this point
+        distribution_correct = sanity_check_distribution(&window);
+        if (!distribution_correct) {
+            fprintf(stderr, "Window distribution is not correct\n");
+            exit(1);
+        } else {
+            // The distribution is correct in this case, so proceed...
+            // Calculate the relative entropy of the two distributions
+            window_history[i] = normalized_relative_network_entropy(&window, baseline);
+        }
+    }
+
+    // Store the standard deviation in the given distribution
+    baseline->mean               = mean(window_history, num_windows);
+    baseline->standard_deviation = std_dev(window_history, num_windows);
+}
+
+int main(int argc, char **argv)
+{
     char *dev;
     char errbuf[PCAP_ERRBUF_SIZE];
-    const u_char *packet;
-    struct pcap_pkthdr hdr;
-    struct ether_header *eptr;
     packet_distribution *baseline_distribution;
     packet_distribution *window_distribution;
-    double sum;
+    double nrne;
+    double std;
     unsigned char distribution_correct;
 
     // Initialize the running distribution
     baseline_distribution = (packet_distribution *) malloc ( sizeof (packet_distribution) );
     window_distribution   = (packet_distribution *) malloc ( sizeof (packet_distribution) );
     bzero(baseline_distribution, sizeof (packet_distribution));
-    bzero(window_distribution,   sizeof (packet_distribution));
+    bzero(window_distribution, sizeof (packet_distribution));
 
     // Find a device to sniff
     dev = pcap_lookupdev(errbuf);
@@ -361,6 +436,7 @@ int main(int argc, char **argv)
     }
 
     // Begin capturing packets for baseline behaviour
+    printf("Starting baseline capture\n");
     pcap_loop(descr, -1, process_packet, (u_char *)baseline_distribution);
     distribution_correct = sanity_check_distribution(baseline_distribution);
     if (!distribution_correct) {
@@ -369,6 +445,9 @@ int main(int argc, char **argv)
     }
 
     printf ("\nFinished capturing baseline behaviour.\n\n");
+    capture_regular_deviation(baseline_distribution, 5);
+    print_distribution(baseline_distribution);
+    printf("Regular deviation: %f\n", baseline_distribution->standard_deviation);
 
     // Begin capturing window distributions and comparing every `window_size_in_pkts` many captures
     for (;;) {
@@ -379,17 +458,20 @@ int main(int argc, char **argv)
         //        Kullback-Leibler divergence is only defined at this point
         distribution_correct = sanity_check_distribution(window_distribution);
         if (!distribution_correct) {
-            fprintf(stderr, "Window distribution is not correct\n");
-            exit(1);
+            fprintf(stderr, "Window distribution is not correct, ignoring window\n");
         } else {
             // The distribution is correct in this case, so proceed...
             // Calculate the relative entropy of the two distributions
-            // TODO - alert when entropy divergence is large enough
             relative_entropy_of_distributions(window_distribution, baseline_distribution);
-            printf("NRNE: %lf\n",
-                    normalized_relative_network_entropy(
-                        window_distribution,
-                        baseline_distribution));
+            nrne = normalized_relative_network_entropy( window_distribution, baseline_distribution);
+            std  = square_difference(nrne, baseline_distribution->mean);
+            printf("NRNE: %lf\n", nrne);
+            printf("Deviation: Regular(%f) Window(%f)\n", baseline_distribution->standard_deviation, std);
+            print_distribution(baseline_distribution);
+
+            if (std > 1) { //(3 * baseline_distribution->standard_deviation)) {
+                printf("[!!] ANOMALOUS USAGE DETECTED!!!");
+            }
         }
 
         // Reset the window distribution
