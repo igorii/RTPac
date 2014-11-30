@@ -49,12 +49,12 @@ void print_distribution (packet_distribution *distrib)
            "    Packet Length: ", distrib->count);
 
     for (i = 0; i < LENN; ++i) {
-        printf("  %d(%lu)", i, distrib->pkt_len_class[i]);
+        printf(" \t%d(%lu)", i, distrib->pkt_len_class[i]);
     }
 
-    printf("\n    Protocol Flag:");
+    printf("\n    Protocol Flag: ");
     for (i = 0; i < PFLN; ++i) {
-        printf("  %d(%lu)", i, distrib->protocol_flag_class[i]);
+        printf(" \t%d(%lu)", i, distrib->protocol_flag_class[i]);
     }
     printf("\n");
 
@@ -319,11 +319,7 @@ double sanity_check_probabilities (
 unsigned char sanity_check_distribution (packet_distribution *distrib)
 {
     // All sums should be 1
-    return (0.001 > 1 - sanity_check_probabilities (CDSTN,
-                distrib->count, distrib->dst_port_class) &&
-            0.001 > 1 - sanity_check_probabilities (DSTN,
-                distrib->count, distrib->dst_port) &&
-            0.001 > 1 - sanity_check_probabilities (PFLN,
+    return (0.001 > 1 - sanity_check_probabilities (PFLN,
                 distrib->count, distrib->protocol_flag_class) &&
             0.001 > 1 - sanity_check_probabilities (LENN,
                 distrib->count, distrib->pkt_len_class));
@@ -390,6 +386,7 @@ void capture_regular_deviation(packet_distribution *baseline, int num_windows)
         // Sanity check, ensure all probability vectors sum to 1
         //        Kullback-Leibler divergence is only defined at this point
         distribution_correct = sanity_check_distribution(&window);
+        print_distribution(&window);
         if (!distribution_correct) {
             fprintf(stderr, "Window distribution is not correct\n");
             exit(1);
