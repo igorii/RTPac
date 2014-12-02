@@ -18,7 +18,7 @@
 #define SIZE_ETHERNET 14
 #define CDSTN 587
 #define DSTN 65536
-#define LENN 6
+#define LENN 7
 #define PFLN 4
 
 // TODO move this into the user data passed to pcap loop
@@ -54,17 +54,17 @@ typedef struct s_callback_data {
 void print_distribution (packet_distribution *distrib)
 {
     int i;
-    printf("Distribution(count=%lu)\n"
-           "    Packet Length: ", distrib->count);
 
     for (i = 0; i < LENN; ++i) {
-        printf(" \t%d(%lu)", i, distrib->pkt_len_class[i]);
+        printf("  %d|%.2f", i, element_frequency(distrib->pkt_len_class[i], distrib->count));
     }
 
-    printf("\n    Protocol Flag: ");
-    for (i = 0; i < PFLN; ++i) {
-        printf(" \t%d(%lu)", i, distrib->protocol_flag_class[i]);
-    }
+    printf("  [c=%lu]", distrib->count);
+
+    //printf("\n    Protocol Flag: ");
+    //for (i = 0; i < PFLN; ++i) {
+    //    printf(" \t%d(%f)", i, element_frequency(distrib->protocol_flag_class[i], distrib->count));
+    //}
     printf("\n");
 
 }
@@ -156,8 +156,10 @@ unsigned int get_packet_length_class (const struct pcap_pkthdr* pkthdr)
         return 3;
     } else if (caplen < 1024) {
         return 4;
-    } else {
+    } else if (caplen < 1518) {
         return 5;
+    } else {
+        return 6;
     }
 }
 
@@ -194,9 +196,9 @@ void process_tcp_packet (
     }
 
     // TODO REMOVE THIS -- Skip SSH traffic for now to remove feedback loop
-    if (22 == ntohs(tcp->th_sport) || 22 == ntohs(tcp->th_dport)) {
-        return;
-    }
+    //if (22 == ntohs(tcp->th_sport) || 22 == ntohs(tcp->th_dport)) {
+    //    return;
+    //}
 
     // TODO Update distrib with correct classes
     distrib->count++;
@@ -308,9 +310,9 @@ void process_packet(
 
     // TODO remove magic Number
     // stop capturing at the window limit
+    memcpy(&distrib->end_time, &pkthdr->ts, sizeof(struct timeval));
     if (distrib->count >= distrib->max_count) {
         pcap_breakloop(descr);
-        memcpy(&distrib->end_time, &pkthdr->ts, sizeof(struct timeval));
     }
 }
 
@@ -428,6 +430,12 @@ int main(int argc, char **argv)
     double max_dev = 0;
     int num_attacks = 0;
 
+    int baseline_max_count = 100000000;
+    int window_max_count   = 1000;
+
+    const char * training_file = "testdata/training-inside";
+    const char * attack_file   = "testdata/attack-inside";
+
     // Initialize the running distribution
     baseline_distribution = (packet_distribution *) malloc ( sizeof (packet_distribution) );
     window_distribution   = (packet_distribution *) malloc ( sizeof (packet_distribution) );
@@ -443,7 +451,7 @@ int main(int argc, char **argv)
 
     // Open the interface
 //    descr = pcap_open_live(dev, BUFSIZ, 0, -1, errbuf);
-    descr = pcap_open_offline("testdata/attack", errbuf);
+    descr = pcap_open_offline(training_file, errbuf);
     if (descr == NULL) {
         printf("pcap_open_live(): %s\n", errbuf);
         exit(1);
@@ -451,7 +459,7 @@ int main(int argc, char **argv)
 
     // Begin capturing packets for baseline behaviour
     printf("Starting baseline capture\n");
-    baseline_distribution->max_count = 100000000;
+    baseline_distribution->max_count = baseline_max_count;
     pcap_loop(descr, -1, process_packet, (u_char *)baseline_distribution);
     distribution_correct = sanity_check_distribution(baseline_distribution);
     if (!distribution_correct) {
@@ -460,23 +468,24 @@ int main(int argc, char **argv)
     }
 
     pcap_close(descr);
-    descr = pcap_open_offline("testdata/attack", errbuf);
+    descr = pcap_open_offline(training_file, errbuf);
     if (descr == NULL) {
         printf("pcap_open_live(): %s\n", errbuf);
         exit(1);
     }
 
-    capture_regular_deviation(baseline_distribution, floor(baseline_distribution->count / 50000), 50000);
+    capture_regular_deviation(baseline_distribution,
+            floor(baseline_distribution->count / window_max_count), window_max_count);
 
     printf ("\nFinished capturing baseline behaviour.\n\n");
     print_distribution(baseline_distribution);
-    printf("  Between %s      and %s\n",
+    printf("\nBaseline between %s             and %s\n\n",
             ctime((const time_t*)&baseline_distribution->start_time.tv_sec),
             ctime((const time_t*)&baseline_distribution->end_time.tv_sec));
     printf("Regular deviation: %f\n\n", baseline_distribution->standard_deviation);
 
     pcap_close(descr);
-    descr = pcap_open_offline("testdata/attack", errbuf);
+    descr = pcap_open_offline(attack_file, errbuf);
     if (descr == NULL) {
         printf("pcap_open_live(): %s\n", errbuf);
         exit(1);
@@ -488,7 +497,7 @@ int main(int argc, char **argv)
 
         // Reset the window distribution
         bzero(window_distribution, sizeof (packet_distribution));
-        window_distribution->max_count = 50000;
+        window_distribution->max_count = window_max_count;
         pcap_loop(descr, -1, process_packet, (u_char *)window_distribution);
 
         // If we have finished reading the file, break out of the loop
@@ -513,12 +522,19 @@ int main(int argc, char **argv)
             //printf("    Deviation: Regular(%f) Window(%f)\n", baseline_distribution->standard_deviation, std);
             //print_distribution(baseline_distribution);
 
-            if (std > (2 * baseline_distribution->standard_deviation)) {
-                printf("[!!] ANOMALOUS USAGE DETECTED!!!\n");
-                printf("  Deviation: Regular(%f) Window(%f)\n", baseline_distribution->standard_deviation, std);
-                printf("  Between %s      and %s\n",
-                        ctime((const time_t*)&window_distribution->start_time.tv_sec),
-                        ctime((const time_t*)&window_distribution->end_time.tv_sec));
+            if (std > (20 * baseline_distribution->standard_deviation)) {
+                printf("\n[!!] ANOMALOUS USAGE DETECTED : %s",
+                        ctime((const time_t*)&window_distribution->start_time.tv_sec));
+                fprintf(stderr, "\n[!!] ANOMALOUS USAGE DETECTED : %s",
+                        ctime((const time_t*)&window_distribution->start_time.tv_sec));
+                printf("  RDev: %f\n  WDev: %f\n", baseline_distribution->standard_deviation, std);
+                printf("  Norm: ");
+                print_distribution(baseline_distribution);
+                printf("  Capd: ");
+                print_distribution(window_distribution);
+                //printf("  Between %s      and %s\n",
+                //        ctime((const time_t*)&window_distribution->start_time.tv_sec),
+                //        ctime((const time_t*)&window_distribution->end_time.tv_sec));
                 num_attacks++;
             }
         }
