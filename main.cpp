@@ -14,6 +14,7 @@
 
 #include "defs.h"
 #include "entropy.h"
+#include "cli_opts.h"
 
 #define SIZE_ETHERNET 14
 #define CDSTN 587
@@ -50,21 +51,6 @@ typedef struct s_callback_data {
     packet_distribution window;
     packet_distribution baseline;
 } callback_data;
-
-typedef struct opts {
-    unsigned char live;
-#define BUFFERSIZ 256
-    char training_file[BUFFERSIZ];
-    char attack_file[BUFFERSIZ];
-    int max_baseline_count;
-    int max_window_count;
-    int max_window_num;
-
-    unsigned char use_dst_port_class;
-    unsigned char use_dst_port;
-    unsigned char use_pkt_len;
-    unsigned char use_protocol_flag;
-} cli_opts;
 
 void print_distribution (packet_distribution *distrib)
 {
@@ -489,106 +475,6 @@ packet_distribution *new_distribution() {
 }
 
 
-void parse_args(int argc, char **argv, cli_opts *opts) {
-    int m, n, l, x, ch;
-    char s[BUFFERSIZ];
-    bzero(opts, (sizeof(cli_opts)));
-
-    for (n = 1; n < argc; n++) {
-        switch ((int)argv[n][0]) {
-            case '-':
-            case '/': x = 0;
-                      l = strlen(argv[n]);
-                      for (m = 1; m < l; ++m) {
-                          ch = (int)argv[n][m];
-                          switch (ch) {
-                              case 'u': if (m + 1 >= l) {
-                                            puts( "Illegal syntax -- no argument" );
-                                            exit(1);
-                                        } else {
-                                            strcpy(s, &argv[n][m+1]);
-                                            if (0 == strcmp(s, "p")) {
-                                                opts->use_dst_port = 1;
-                                            } else if (0 == strcmp(s, "pc")) {
-                                                opts->use_dst_port_class = 1;
-                                            } else if (0 == strcmp(s, "l")) {
-                                                opts->use_pkt_len = 1;
-                                            } else if (0 == strcmp(s, "pf")) {
-                                                opts->use_protocol_flag = 1;
-                                            }
-                                        }
-                                        x = 1;
-                                        break;
-                              case 'l':
-                                        if (m + 1 >= l) {
-                                            puts( "Illegal syntax -- no argument" );
-                                            exit(1);
-                                        } else {
-                                            strcpy(s, &argv[n][m+1]);
-                                            opts->live = 0 == strcmp(s, "y");
-                                        }
-                                        x = 1;
-                                        break;
-                              case 'b': if (m + 1 >= l) {
-                                            puts( "Illegal syntax -- no argument" );
-                                            exit(1);
-                                        } else {
-                                            strcpy(s, &argv[n][m+1]);
-                                            opts->max_baseline_count = atoi(s);
-                                        }
-                                        x = 1;
-                                        break;
-                              case 'w': if (m + 1 >= l) {
-                                            puts( "Illegal syntax -- no argument" );
-                                            exit(1);
-                                        } else {
-                                            strcpy(s, &argv[n][m+1]);
-                                            opts->max_window_count = atoi(s);
-                                        }
-                                        x = 1;
-                                        break;
-                              case 'n': if (m + 1 >= l) {
-                                            puts( "Illegal syntax -- no argument" );
-                                            exit(1);
-                                        } else {
-                                            strcpy(s, &argv[n][m+1]);
-                                            opts->max_window_num = atoi(s);
-                                        }
-                                        x = 1;
-                                        break;
-                              case 't': if (m + 1 >= l) {
-                                            puts( "Illegal syntax -- no argument" );
-                                            exit(1);
-                                        } else {
-                                            strcpy(s, &argv[n][m+1]);
-                                            strcpy(opts->training_file, s);
-                                        }
-                                        x = 1;
-                                        break;
-                              case 'a': if (m + 1 >= l) {
-                                            puts( "Illegal syntax -- no argument" );
-                                            exit(1);
-                                        } else {
-                                            strcpy(s, &argv[n][m+1]);
-                                            strcpy(opts->attack_file, s);
-                                        }
-                                        x = 1;
-                                        break;
-                              default:  printf( "Illegal option code = %c\n", ch );
-                                        x = 1;
-                                        exit(1);
-                                        break;
-                          }
-                          if(x == 1) {
-                              break;
-                          }
-                      }
-                      break;
-            default:  printf( "Text = %s\n", argv[n] );
-                      break;
-        }
-    }
-}
 
 int main(int argc, char **argv)
 {
