@@ -48,3 +48,10 @@ struct sniff_tcp {
     u_short th_sum;         /* checksum */
     u_short th_urp;         /* urgent pointer */
 };
+
+struct sniff_udp {
+    uint16_t        sport;  /* source port */
+    uint16_t        dport;  /* destination port */
+    uint16_t        udp_length;
+    uint16_t        udp_sum;    /* checksum */
+};

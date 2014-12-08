@@ -51,34 +51,54 @@ typedef struct s_callback_data {
     packet_distribution baseline;
 } callback_data;
 
+typedef struct opts {
+    unsigned char live;
+#define BUFFERSIZ 256
+    char training_file[BUFFERSIZ];
+    char attack_file[BUFFERSIZ];
+    int max_baseline_count;
+    int max_window_count;
+    int max_window_num;
+
+    unsigned char use_dst_port_class;
+    unsigned char use_dst_port;
+    unsigned char use_pkt_len;
+    unsigned char use_protocol_flag;
+} cli_opts;
+
 void print_distribution (packet_distribution *distrib)
 {
     int i;
 
-    for (i = 0; i < LENN; ++i) {
-        printf("  %d|%.2f", i, element_frequency(distrib->pkt_len_class[i], distrib->count));
-    }
+    //for (i = 0; i < LENN; ++i) {
+    //    printf("  %d|%.2f", i, element_frequency(distrib->pkt_len_class[i], distrib->count));
+    //}
 
-    printf("  [c=%lu]", distrib->count);
+    //printf("  [c=%lu]", distrib->count);
 
     //printf("\n    Protocol Flag: ");
     //for (i = 0; i < PFLN; ++i) {
     //    printf(" \t%d(%f)", i, element_frequency(distrib->protocol_flag_class[i], distrib->count));
     //}
-    printf("\n");
+    //printf("\n");
 
 }
 
 // Average the relative entropies of all distributions in two classes
 double normalized_relative_network_entropy (
         packet_distribution *distrib1,
-        packet_distribution *distrib2)
+        packet_distribution *distrib2,
+        cli_opts *opts)
 {
     double sum = 0;
-    sum += relative_entropy (distrib1->count, distrib1->pkt_len_class,
-            distrib2->count, distrib2->pkt_len_class, LENN);
-//    sum += relative_entropy (distrib1->count, distrib1->protocol_flag_class,
-//            distrib2->count, distrib2->protocol_flag_class, PFLN);
+    //sum += relative_entropy (distrib1->count, distrib1->pkt_len_class,
+    //        distrib2->count, distrib2->pkt_len_class, LENN);
+    //sum += relative_entropy (distrib1->count, distrib1->dst_port,
+    //        distrib2->count, distrib2->dst_port, DSTN);
+    //sum += relative_entropy (distrib1->count, distrib1->protocol_flag_class,
+    //        distrib2->count, distrib2->protocol_flag_class, PFLN);
+    sum += relative_entropy (distrib1->count, distrib1->dst_port_class,
+            distrib2->count, distrib2->dst_port_class, CDSTN);
     return sum / 1;
 }
 
@@ -191,16 +211,14 @@ void process_tcp_packet (
     tcp = (struct sniff_tcp*)(packet + SIZE_ETHERNET + size_ip);
     size_tcp = TH_OFF(tcp) * 4;
     if (size_tcp < 20) {
-        //printf("   * Invalid TCP header length: %u bytes\n", size_tcp);
         return;
     }
 
     // TODO REMOVE THIS -- Skip SSH traffic for now to remove feedback loop
-    //if (22 == ntohs(tcp->th_sport) || 22 == ntohs(tcp->th_dport)) {
-    //    return;
-    //}
+    if (22 == ntohs(tcp->th_sport) || 22 == ntohs(tcp->th_dport)) {
+        return;
+    }
 
-    // TODO Update distrib with correct classes
     distrib->count++;
     distrib->dst_port            [ ntohs(tcp->th_dport)                       ]++;
     distrib->dst_port_class      [ (get_dst_port_class(ntohs(tcp->th_dport))) ]++;
@@ -255,10 +273,24 @@ void process_tcp_packet (
 }
 
 // Given a udp packet, update the distribution information `distrib` with the correct classes
-void process_udp_packet () {
-    // TODO Must update distribution information in same way as tcp()
-//    printf("   Protocol: UDP\n");
- //   printf("   Primary class   : %d\n", get_protocol_flag(P_UDP, NULL));
+void process_udp_packet (
+        packet_distribution *distrib,
+        const struct pcap_pkthdr* pkthdr,
+        const u_char *packet,
+        const struct sniff_ethernet *ethernet,
+        const struct sniff_ip *ip,
+        const u_int size_ip)
+{
+    const struct sniff_udp *udp;           /* The UDP header */
+    const unsigned char *payload;          /* Packet payload */
+    u_int size_udp;
+    udp = (struct sniff_udp*)(packet + SIZE_ETHERNET + size_ip);
+
+    distrib->count++;
+    distrib->dst_port            [ ntohs(udp->dport)                     ]++;
+    distrib->dst_port_class      [ get_dst_port_class(ntohs(udp->dport)) ]++;
+    distrib->pkt_len_class       [ get_packet_length_class(pkthdr)       ]++;
+    distrib->protocol_flag_class [ get_protocol_flag(P_UDP, NULL)        ]++;
 }
 
 // Capture a packet from the network, switch on its protocol, and classify its distributoin information.
@@ -286,11 +318,9 @@ void process_packet(
     ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
     size_ip = IP_HL(ip) * 4;
     if (size_ip < 20) {
-    //    printf("   * Invalid IP header length: %u bytes\n", size_ip);
+        //    printf("   * Invalid IP header length: %u bytes\n", size_ip);
         return;
     }
-
-    // TODO Update protocol independent distribution classes
 
     // Dispatch to the correct protocol handler
     switch(ip->ip_p) {
@@ -298,7 +328,7 @@ void process_packet(
             process_tcp_packet(distrib, pkthdr, packet, ethernet, ip, size_ip);
             break;
         case IPPROTO_UDP:
-            process_udp_packet();
+            //process_udp_packet(distrib, pkthdr, packet, ethernet, ip, size_ip);
             break;
         case IPPROTO_ICMP:
             return;
@@ -308,8 +338,7 @@ void process_packet(
             return;
     }
 
-    // TODO remove magic Number
-    // stop capturing at the window limit
+    // Stop capturing at the window limit
     memcpy(&distrib->end_time, &pkthdr->ts, sizeof(struct timeval));
     if (distrib->count >= distrib->max_count) {
         pcap_breakloop(descr);
@@ -384,7 +413,7 @@ double std_dev(double *distribution, int num)
     return mean(squares, num);
 }
 
-void capture_regular_deviation(packet_distribution *baseline, int num_windows, int window_size)
+void capture_regular_deviation(packet_distribution *baseline, int num_windows, int window_size, cli_opts *opts)
 {
     int i;
     double window_history[num_windows];
@@ -408,7 +437,7 @@ void capture_regular_deviation(packet_distribution *baseline, int num_windows, i
         } else {
             // The distribution is correct in this case, so proceed...
             // Calculate the relative entropy of the two distributions
-            window_history[i] = normalized_relative_network_entropy(&window, baseline);
+            window_history[i] = normalized_relative_network_entropy(&window, baseline, opts);
         }
     }
 
@@ -417,49 +446,174 @@ void capture_regular_deviation(packet_distribution *baseline, int num_windows, i
     baseline->standard_deviation = std_dev(window_history, num_windows);
 }
 
-
-int main(int argc, char **argv)
-{
+pcap_t *open_live() {
     char *dev;
     char errbuf[PCAP_ERRBUF_SIZE];
-    packet_distribution *baseline_distribution;
-    packet_distribution *window_distribution;
-    double nrne;
-    double std;
-    unsigned char distribution_correct;
-    double max_dev = 0;
-    int num_attacks = 0;
-
-    int baseline_max_count = 100000000;
-    int window_max_count   = 1000;
-
-    const char * training_file = "testdata/training-inside";
-    const char * attack_file   = "testdata/attack-inside";
-
-    // Initialize the running distribution
-    baseline_distribution = (packet_distribution *) malloc ( sizeof (packet_distribution) );
-    window_distribution   = (packet_distribution *) malloc ( sizeof (packet_distribution) );
-    bzero(baseline_distribution, sizeof (packet_distribution));
-    bzero(window_distribution, sizeof (packet_distribution));
 
     // Find a device to sniff
-    //dev = pcap_lookupdev(errbuf);
-    //if (dev == NULL) {
-    //    printf("%s\n", errbuf);
-    //    exit(1);
-    //}
+    dev = pcap_lookupdev(errbuf);
+    if (dev == NULL) {
+        printf("%s\n", errbuf);
+        exit(1);
+    }
 
     // Open the interface
-//    descr = pcap_open_live(dev, BUFSIZ, 0, -1, errbuf);
-    descr = pcap_open_offline(training_file, errbuf);
+    descr = pcap_open_live(dev, BUFSIZ, 0, -1, errbuf);
     if (descr == NULL) {
         printf("pcap_open_live(): %s\n", errbuf);
         exit(1);
     }
 
+    pcap_setdirection(descr, PCAP_D_IN);
+    return descr;
+}
+
+pcap_t *open_offline(const char * file) {
+    char errbuf[PCAP_ERRBUF_SIZE];
+
+    descr = pcap_open_offline(file, errbuf);
+    if (descr == NULL) {
+        printf("pcap_open_live(): %s\n", errbuf);
+        exit(1);
+    }
+
+    pcap_setdirection(descr, PCAP_D_IN);
+    return descr;
+}
+
+packet_distribution *new_distribution() {
+    packet_distribution *distribution;
+    distribution = (packet_distribution *) malloc ( sizeof (packet_distribution) );
+    bzero(distribution, sizeof (packet_distribution));
+    return distribution;
+}
+
+
+void parse_args(int argc, char **argv, cli_opts *opts) {
+    int m, n, l, x, ch;
+    char s[BUFFERSIZ];
+    bzero(opts, (sizeof(cli_opts)));
+
+    for (n = 1; n < argc; n++) {
+        switch ((int)argv[n][0]) {
+            case '-':
+            case '/': x = 0;
+                      l = strlen(argv[n]);
+                      for (m = 1; m < l; ++m) {
+                          ch = (int)argv[n][m];
+                          switch (ch) {
+                              case 'u': if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            if (0 == strcmp(s, "p")) {
+                                                opts->use_dst_port = 1;
+                                            } else if (0 == strcmp(s, "pc")) {
+                                                opts->use_dst_port_class = 1;
+                                            } else if (0 == strcmp(s, "l")) {
+                                                opts->use_pkt_len = 1;
+                                            } else if (0 == strcmp(s, "pf")) {
+                                                opts->use_protocol_flag = 1;
+                                            }
+                                        }
+                                        x = 1;
+                                        break;
+                              case 'l':
+                                        if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            opts->live = 0 == strcmp(s, "y");
+                                        }
+                                        x = 1;
+                                        break;
+                              case 'b': if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            opts->max_baseline_count = atoi(s);
+                                        }
+                                        x = 1;
+                                        break;
+                              case 'w': if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            opts->max_window_count = atoi(s);
+                                        }
+                                        x = 1;
+                                        break;
+                              case 'n': if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            opts->max_window_num = atoi(s);
+                                        }
+                                        x = 1;
+                                        break;
+                              case 't': if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            strcpy(opts->training_file, s);
+                                        }
+                                        x = 1;
+                                        break;
+                              case 'a': if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            strcpy(opts->attack_file, s);
+                                        }
+                                        x = 1;
+                                        break;
+                              default:  printf( "Illegal option code = %c\n", ch );
+                                        x = 1;
+                                        exit(1);
+                                        break;
+                          }
+                          if(x == 1) {
+                              break;
+                          }
+                      }
+                      break;
+            default:  printf( "Text = %s\n", argv[n] );
+                      break;
+        }
+    }
+}
+
+int main(int argc, char **argv)
+{
+    packet_distribution *baseline_distribution;
+    packet_distribution *window_distribution;
+    double nrne;
+    double std;
+    unsigned char distribution_correct;
+    int num_attacks = 0;
+    cli_opts opts;
+
+    parse_args(argc, argv, &opts);
+
+    // Initialize the running distribution
+    baseline_distribution = new_distribution();
+    window_distribution   = new_distribution();
+
+    if (opts.live) {
+        descr = open_live();
+    } else {
+        descr = open_offline(opts.training_file);
+    }
+
     // Begin capturing packets for baseline behaviour
-    printf("Starting baseline capture\n");
-    baseline_distribution->max_count = baseline_max_count;
+    baseline_distribution->max_count = opts.max_baseline_count;
     pcap_loop(descr, -1, process_packet, (u_char *)baseline_distribution);
     distribution_correct = sanity_check_distribution(baseline_distribution);
     if (!distribution_correct) {
@@ -468,36 +622,36 @@ int main(int argc, char **argv)
     }
 
     pcap_close(descr);
-    descr = pcap_open_offline(training_file, errbuf);
-    if (descr == NULL) {
-        printf("pcap_open_live(): %s\n", errbuf);
-        exit(1);
+
+    if (opts.live) {
+        descr = open_live();
+    } else {
+        descr = open_offline(opts.training_file);
     }
 
     capture_regular_deviation(baseline_distribution,
-            floor(baseline_distribution->count / window_max_count), window_max_count);
+            floor(baseline_distribution->count / opts.max_window_count),
+            opts.max_window_count,
+            &opts);
 
     printf ("\nFinished capturing baseline behaviour.\n\n");
     print_distribution(baseline_distribution);
-    printf("\nBaseline between %s             and %s\n\n",
-            ctime((const time_t*)&baseline_distribution->start_time.tv_sec),
-            ctime((const time_t*)&baseline_distribution->end_time.tv_sec));
     printf("Regular deviation: %f\n\n", baseline_distribution->standard_deviation);
 
     pcap_close(descr);
-    descr = pcap_open_offline(attack_file, errbuf);
-    if (descr == NULL) {
-        printf("pcap_open_live(): %s\n", errbuf);
-        exit(1);
+
+    if (opts.live) {
+        descr = open_live();
+    } else {
+        descr = open_offline(opts.attack_file);
     }
 
     // Begin capturing window distributions and comparing every `window_size_in_pkts` many captures
     for (;;) {
-//        printf ("\nBeginning windowed capture...\n\n");
 
         // Reset the window distribution
         bzero(window_distribution, sizeof (packet_distribution));
-        window_distribution->max_count = window_max_count;
+        window_distribution->max_count = opts.max_window_count;
         pcap_loop(descr, -1, process_packet, (u_char *)window_distribution);
 
         // If we have finished reading the file, break out of the loop
@@ -514,13 +668,8 @@ int main(int argc, char **argv)
         } else {
             // The distribution is correct in this case, so proceed...
             // Calculate the relative entropy of the two distributions
-            //relative_entropy_of_distributions(window_distribution, baseline_distribution);
-            nrne = normalized_relative_network_entropy( window_distribution, baseline_distribution);
+            nrne = normalized_relative_network_entropy(window_distribution, baseline_distribution, &opts);
             std  = square_difference(nrne, baseline_distribution->mean);
-            if (std > max_dev) { max_dev = std; }
-//            printf("    NRNE: %lf\n", nrne);
-            //printf("    Deviation: Regular(%f) Window(%f)\n", baseline_distribution->standard_deviation, std);
-            //print_distribution(baseline_distribution);
 
             if (std > (20 * baseline_distribution->standard_deviation)) {
                 printf("\n[!!] ANOMALOUS USAGE DETECTED : %s",
@@ -532,15 +681,11 @@ int main(int argc, char **argv)
                 print_distribution(baseline_distribution);
                 printf("  Capd: ");
                 print_distribution(window_distribution);
-                //printf("  Between %s      and %s\n",
-                //        ctime((const time_t*)&window_distribution->start_time.tv_sec),
-                //        ctime((const time_t*)&window_distribution->end_time.tv_sec));
                 num_attacks++;
             }
         }
     }
 
-    printf("Max deviation: %f\n", max_dev);
     printf("Num attacks  : %d\n", num_attacks);
 
     // This will never be reached
