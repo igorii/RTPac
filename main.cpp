@@ -15,159 +15,19 @@
 #include "defs.h"
 #include "entropy.h"
 #include "cli_opts.h"
+#include "distributions.h"
 
 #define SIZE_ETHERNET 14
-#define CDSTN 587
-#define DSTN 65536
-#define LENN 7
-#define PFLN 4
 
 // TODO move this into the user data passed to pcap loop
 pcap_t* descr;
 
 // @see "A Network Anomaly Detection Method Based on Relative Entropy Theory" -- Ya-ling Zhang, Zhao-gou Han, Jiao-xia Ren
 
-typedef enum { P_TCP, P_UDP } Protocol;
-typedef enum { TCP, TCPSYN, TCPRST, UDP } ProtocolFlag;
-
-// Information distributions:
-//    Protocol type (tcp, udp)   -- potentially include tcpack, tcprst, tcpsyn (see get_protocol_flag)
-//    Service (destination port) -- potentially break up into classes
-//    Packet bytes               -- see length_class
-typedef struct s_packet_distribution {
-    unsigned long count;
-    unsigned long dst_port_class[CDSTN];
-    unsigned long dst_port[DSTN];
-    unsigned long pkt_len_class[LENN];
-    unsigned long protocol_flag_class[PFLN];
-    double mean;
-    double standard_deviation;
-    unsigned long max_count;
-    struct timeval start_time;
-    struct timeval end_time;
-} packet_distribution;
-
 typedef struct s_callback_data {
     packet_distribution window;
     packet_distribution baseline;
 } callback_data;
-
-void print_distribution (packet_distribution *distrib)
-{
-    int i;
-
-    //for (i = 0; i < LENN; ++i) {
-    //    printf("  %d|%.2f", i, element_frequency(distrib->pkt_len_class[i], distrib->count));
-    //}
-
-    //printf("  [c=%lu]", distrib->count);
-
-    //printf("\n    Protocol Flag: ");
-    //for (i = 0; i < PFLN; ++i) {
-    //    printf(" \t%d(%f)", i, element_frequency(distrib->protocol_flag_class[i], distrib->count));
-    //}
-    //printf("\n");
-
-}
-
-// Average the relative entropies of all distributions in two classes
-double normalized_relative_network_entropy (
-        packet_distribution *distrib1,
-        packet_distribution *distrib2,
-        cli_opts *opts)
-{
-    double sum = 0;
-    //sum += relative_entropy (distrib1->count, distrib1->pkt_len_class,
-    //        distrib2->count, distrib2->pkt_len_class, LENN);
-    //sum += relative_entropy (distrib1->count, distrib1->dst_port,
-    //        distrib2->count, distrib2->dst_port, DSTN);
-    //sum += relative_entropy (distrib1->count, distrib1->protocol_flag_class,
-    //        distrib2->count, distrib2->protocol_flag_class, PFLN);
-    sum += relative_entropy (distrib1->count, distrib1->dst_port_class,
-            distrib2->count, distrib2->dst_port_class, CDSTN);
-    return sum / 1;
-}
-
-ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
-{
-    if (proto == P_UDP) {
-        return UDP;
-    } else if (tcp->th_flags & TH_SYN) {
-        return TCPSYN;
-    } else if (tcp->th_flags & TH_RST) {
-        return TCPRST;
-    } else {
-        return TCP;
-    }
-}
-
-// 1) Divide packets into packet classes
-//
-//      First  Dimension  = TCP | TCP SYN | TCP RST | UDP
-//      Second Dimension  = Port range
-//          80                           -- HTTP
-//          0     - 1023 (excluding 80)  -- Well Known Ports (divide into groups of 10)
-//          1024  - 49151                -- Registered Ports (divide into groups of 100)
-//          49152 - 65535                -- DynamicPrivate Ports
-unsigned short get_dst_port_class (unsigned short dst)
-{
-    if (dst == 80) {
-        return 0;
-    } else if (dst < 1024) {
-        return 4 + dst / 10;
-    } else if (dst < 49124) {
-        return 107 + (dst - 1024) / 100;
-    } else if (dst < 49152) {
-        return 2;
-    } else {
-        return 3;
-    }
-}
-
-unsigned short get_most_active_dst_port_class(packet_distribution *distrib)
-{
-    int i, max = distrib->dst_port_class[0];
-    for (i = 0; i < CDSTN; ++i) {
-        if (distrib->dst_port_class[i] > distrib->dst_port_class[max]) {
-            max = i;
-        }
-    }
-
-    return max;
-}
-
-unsigned short get_most_active_pkt_len_class(packet_distribution *distrib)
-{
-    int i, max = 0;
-    for (i = 0; i < LENN; ++i) {
-        if (distrib->pkt_len_class[i] > distrib->pkt_len_class[max]) {
-            max = i;
-        }
-    }
-
-    return max;
-}
-
-// Split the packet length into well known classes
-unsigned int get_packet_length_class (const struct pcap_pkthdr* pkthdr)
-{
-    unsigned short caplen = pkthdr->caplen;
-    if (caplen <= 64) {
-        return 0;
-    } else if (caplen < 128) {
-        return 1;
-    } else if (caplen < 255) {
-        return 2;
-    } else if (caplen < 512) {
-        return 3;
-    } else if (caplen < 1024) {
-        return 4;
-    } else if (caplen < 1518) {
-        return 5;
-    } else {
-        return 6;
-    }
-}
 
 // Print only printable charcters in a string
 void print_hex(const unsigned char *s)
