@@ -34,15 +34,37 @@ double normalized_relative_network_entropy (
         cli_opts *opts)
 {
     double sum = 0;
-    //sum += relative_entropy (distrib1->count, distrib1->pkt_len_class,
-    //        distrib2->count, distrib2->pkt_len_class, LENN);
-    //sum += relative_entropy (distrib1->count, distrib1->dst_port,
-    //        distrib2->count, distrib2->dst_port, DSTN);
-    //sum += relative_entropy (distrib1->count, distrib1->protocol_flag_class,
-    //        distrib2->count, distrib2->protocol_flag_class, PFLN);
-    sum += relative_entropy (distrib1->count, distrib1->dst_port_class,
-            distrib2->count, distrib2->dst_port_class, CDSTN);
-    return sum / 1;
+    int num_used = 0;
+
+    if (opts->use_dst_port_class) {
+        num_used++;
+        sum += relative_entropy (distrib1->count, distrib1->dst_port_class,
+                distrib2->count, distrib2->dst_port_class, CDSTN);
+    }
+
+    if (opts->use_pkt_len) {
+        num_used++;
+        sum += relative_entropy (distrib1->count, distrib1->pkt_len_class,
+                distrib2->count, distrib2->pkt_len_class, LENN);
+    }
+
+    if (opts->use_dst_port) {
+        num_used++;
+        sum += relative_entropy (distrib1->count, distrib1->dst_port,
+                distrib2->count, distrib2->dst_port, DSTN);
+    }
+
+    if (opts->use_protocol_flag) {
+        num_used++;
+        sum += relative_entropy (distrib1->count, distrib1->protocol_flag_class,
+                distrib2->count, distrib2->protocol_flag_class, PFLN);
+    }
+
+    if (num_used == 0) {
+        return 0;
+    }
+
+    return sum / num_used;
 }
 
 ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp)
