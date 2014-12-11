@@ -29,7 +29,7 @@ typedef struct s_packet_distribution {
     struct timeval end_time;
 } packet_distribution;
 
-void print_distribution (packet_distribution *distrib);
+void print_distribution_to_stderr (packet_distribution *distrib);
 ProtocolFlag get_protocol_flag(Protocol proto, const struct sniff_tcp *tcp);
 unsigned short get_dst_port_class (unsigned short dst);
 unsigned short get_most_active_dst_port_class(packet_distribution *distrib);

@@ -19,8 +19,8 @@
 
 #define SIZE_ETHERNET 14
 
-// TODO move this into the user data passed to pcap loop
-pcap_t* descr;
+pcap_t*       descr;   // PCAP id, global for self access within pcap_loop to break out
+unsigned char verbose; // Global verbosity level
 
 // @see "A Network Anomaly Detection Method Based on Relative Entropy Theory" -- Ya-ling Zhang, Zhao-gou Han, Jiao-xia Ren
 
@@ -76,46 +76,53 @@ void process_tcp_packet (
     //       contrast between trained distributions and current window distributions
     //     - if using ncurses, or some real-time view, move this to process_packet
     //       to avoid duplicating in udp()
-    //    printf("   Protocol: TCP\n");
-    //    printf("   From            : %s\n", inet_ntoa(ip->ip_src));
-    //    printf("   To              : %s\n", inet_ntoa(ip->ip_dst));
-    //    printf("   Src port        : %d\n", ntohs(tcp->th_sport));
-    //    printf("   Dst port        : %d\n", ntohs(tcp->th_dport));
-    //    printf("   Primary class   : %d\n", get_protocol_flag(P_TCP, tcp));
-    //    printf("   Secondary class : %d\n", get_dst_port_class(ntohs(tcp->th_dport)));
-    //    printf("   Length class    : %d\n", get_packet_length_class(pkthdr));
-    //
-    //
-    //    printf("   Most active dst : %d (%f)\n",
-    //            get_most_active_dst_port_class(distrib),
-    //            element_frequency(distrib->dst_port_class[
-    //                  get_most_active_dst_port_class(distrib)
-    //                ], distrib->count));
-    //
-    //    printf("   Most active len : %d (%f)\n",
-    //            get_most_active_pkt_len_class(distrib),
-    //            element_frequency(distrib->pkt_len_class[
-    //                  get_most_active_pkt_len_class(distrib)
-    //                ], distrib->count));
-    //
-    //    printf("   Dst Class Entropy        : %f\n",
-    //            entropy_of_distribution(distrib->count,
-    //                distrib->dst_port_class, CDSTN));
-    //
-    //    printf("   Pkt Length Entropy       : %f\n",
-    //            entropy_of_distribution(distrib->count,
-    //                distrib->pkt_len_class, LENN));
-    //
-    //    printf("   Protocol Flag  Entropy   : %f\n",
-    //            entropy_of_distribution(distrib->count,
-    //                distrib->protocol_flag_class, PFLN));
-    //
-    //    printf("   Destination Port Entropy : %f\n",
-    //            entropy_of_distribution(distrib->count,
-    //                distrib->dst_port, DSTN));
-    //
-    //    payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
-    //print_hex (payload);
+    if (verbose) {
+        printf("\nProtocol: TCP\n");
+        printf("   At                       : %s",
+                ctime((const time_t*)&pkthdr->ts.tv_sec));
+        printf("   From                     : %s\n", inet_ntoa(ip->ip_src));
+        printf("   To                       : %s\n", inet_ntoa(ip->ip_dst));
+        printf("   Src port                 : %d\n", ntohs(tcp->th_sport));
+        printf("   Dst port                 : %d\n", ntohs(tcp->th_dport));
+        printf("   Window iter              : %lu\n", distrib->count);
+        printf("   Primary class            : %d\n", get_protocol_flag(P_TCP, tcp));
+        printf("   Secondary class          : %d\n", get_dst_port_class(ntohs(tcp->th_dport)));
+        printf("   Length class             : %d\n", get_packet_length_class(pkthdr));
+
+
+        printf("   Most active dst          : %d (%f)\n",
+                get_most_active_dst_port_class(distrib),
+                element_frequency(distrib->dst_port_class[
+                      get_most_active_dst_port_class(distrib)
+                    ], distrib->count));
+
+        printf("   Most active len          : %d (%f)\n",
+                get_most_active_pkt_len_class(distrib),
+                element_frequency(distrib->pkt_len_class[
+                      get_most_active_pkt_len_class(distrib)
+                    ], distrib->count));
+
+        printf("   Dst Class Entropy        : %f\n",
+                entropy_of_distribution(distrib->count,
+                    distrib->dst_port_class, CDSTN));
+
+        printf("   Pkt Length Entropy       : %f\n",
+                entropy_of_distribution(distrib->count,
+                    distrib->pkt_len_class, LENN));
+
+        printf("   Protocol Flag  Entropy   : %f\n",
+                entropy_of_distribution(distrib->count,
+                    distrib->protocol_flag_class, PFLN));
+
+        printf("   Destination Port Entropy : %f\n\n",
+                entropy_of_distribution(distrib->count,
+                    distrib->dst_port, DSTN));
+
+        payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
+        print_hex (payload);
+        for (int i = 0; i < 80; ++i) printf("-");
+        printf("\n");
+    }
 }
 
 // Given a udp packet, update the distribution information `distrib` with the correct classes
@@ -164,8 +171,7 @@ void process_packet(
     ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
     size_ip = IP_HL(ip) * 4;
     if (size_ip < 20) {
-        //    printf("   * Invalid IP header length: %u bytes\n", size_ip);
-        return;
+        return; // Invalid IP header length
     }
 
     // Dispatch to the correct protocol handler
@@ -213,7 +219,9 @@ unsigned char sanity_check_distribution (packet_distribution *distrib)
                 distrib->count, distrib->pkt_len_class));
 }
 
-void relative_entropy_of_distributions (packet_distribution *distrib1, packet_distribution *distrib2)
+void relative_entropy_of_distributions (
+        packet_distribution *distrib1,
+        packet_distribution *distrib2)
 {
     printf("Dst Class difference    : %f\n"
             "Dst Port difference     : %f\n"
@@ -259,26 +267,33 @@ double std_dev(double *distribution, int num)
     return mean(squares, num);
 }
 
-void capture_regular_deviation(packet_distribution *baseline, int num_windows, int window_size, cli_opts *opts)
+void capture_regular_deviation(packet_distribution *baseline, cli_opts *opts)
 {
-    int i;
-    double window_history[num_windows];
+    int i, max_window_num;
     unsigned char distribution_correct;
     packet_distribution window;
 
-    for (i = 0; i < num_windows; ++i) {
+    if (opts->live) {
+        max_window_num = opts->max_window_num;
+    } else {
+        max_window_num = floor(baseline->count / opts->max_window_count);
+    }
+
+    double window_history[max_window_num];
+
+    for (i = 0; i < max_window_num; ++i) {
         bzero(&window, sizeof (packet_distribution));
-        window.max_count = window_size;
-        printf ("\nBeginning window %d capture of baseline...\n\n", i);
+        window.max_count = opts->max_window_count;
+        fprintf (stderr, "Beginning window %d capture of baseline... ", i);
+        fflush(stderr);
         pcap_loop(descr, -1, process_packet, (u_char *)&window);
 
         // Sanity check, ensure all probability vectors sum to 1
         //        Kullback-Leibler divergence is only defined at this point
         distribution_correct = sanity_check_distribution(&window);
-        print_distribution(&window);
+        print_distribution_to_stderr(&window);
         if (!distribution_correct) {
-            fprintf(stderr, "Window distribution is not correct\n");
-            print_distribution(&window);
+            printf("Window distribution is not correct\n");
             exit(1);
         } else {
             // The distribution is correct in this case, so proceed...
@@ -288,11 +303,11 @@ void capture_regular_deviation(packet_distribution *baseline, int num_windows, i
     }
 
     // Store the standard deviation in the given distribution
-    baseline->mean               = mean(window_history, num_windows);
-    baseline->standard_deviation = std_dev(window_history, num_windows);
+    baseline->mean               = mean(window_history,    max_window_num);
+    baseline->standard_deviation = std_dev(window_history, max_window_num);
 }
 
-pcap_t *open_live() {
+pcap_t *open_live(pcap_direction_t dir) {
     char *dev;
     char errbuf[PCAP_ERRBUF_SIZE];
 
@@ -314,7 +329,7 @@ pcap_t *open_live() {
     return descr;
 }
 
-pcap_t *open_offline(const char * file) {
+pcap_t *open_offline(const char * file, pcap_direction_t dir) {
     char errbuf[PCAP_ERRBUF_SIZE];
 
     descr = pcap_open_offline(file, errbuf);
@@ -327,14 +342,30 @@ pcap_t *open_offline(const char * file) {
     return descr;
 }
 
+pcap_t *pcap_open (cli_opts *opts, unsigned char isTraining)
+{
+    pcap_direction_t dir;
+    switch (opts->mode) {
+        case 'a': dir = PCAP_D_INOUT; break;
+        case 'i': dir = PCAP_D_IN;    break;
+        case 'o': dir = PCAP_D_OUT;   break;
+    }
+
+    if (opts->live) {
+        return open_live(dir);
+    } else if (isTraining) {
+        return open_offline(opts->training_file, dir);
+    } else {
+        return open_offline(opts->attack_file, dir);
+    }
+}
+
 packet_distribution *new_distribution() {
     packet_distribution *distribution;
     distribution = (packet_distribution *) malloc ( sizeof (packet_distribution) );
     bzero(distribution, sizeof (packet_distribution));
     return distribution;
 }
-
-
 
 int main(int argc, char **argv)
 {
@@ -347,18 +378,15 @@ int main(int argc, char **argv)
     cli_opts opts;
 
     parse_args(argc, argv, &opts);
+    verbose = opts.verbose;
 
     // Initialize the running distribution
     baseline_distribution = new_distribution();
     window_distribution   = new_distribution();
-
-    if (opts.live) {
-        descr = open_live();
-    } else {
-        descr = open_offline(opts.training_file);
-    }
+    descr                 = pcap_open(&opts, 1);
 
     // Begin capturing packets for baseline behaviour
+    fprintf(stderr, "Beginning initial baseline training...\n\n");
     baseline_distribution->max_count = opts.max_baseline_count;
     pcap_loop(descr, -1, process_packet, (u_char *)baseline_distribution);
     distribution_correct = sanity_check_distribution(baseline_distribution);
@@ -368,29 +396,15 @@ int main(int argc, char **argv)
     }
 
     pcap_close(descr);
+    descr = pcap_open(&opts, 1);
+    capture_regular_deviation(baseline_distribution, &opts);
 
-    if (opts.live) {
-        descr = open_live();
-    } else {
-        descr = open_offline(opts.training_file);
-    }
-
-    capture_regular_deviation(baseline_distribution,
-            floor(baseline_distribution->count / opts.max_window_count),
-            opts.max_window_count,
-            &opts);
-
-    printf ("\nFinished capturing baseline behaviour.\n\n");
-    print_distribution(baseline_distribution);
-    printf("Regular deviation: %f\n\n", baseline_distribution->standard_deviation);
+    fprintf (stderr, "\nFinished capturing baseline behaviour ");
+    print_distribution_to_stderr(baseline_distribution);
+    fprintf(stderr, "Regular deviation: %f\n\n", baseline_distribution->standard_deviation);
 
     pcap_close(descr);
-
-    if (opts.live) {
-        descr = open_live();
-    } else {
-        descr = open_offline(opts.attack_file);
-    }
+    descr = pcap_open(&opts, 0);
 
     // Begin capturing window distributions and comparing every `window_size_in_pkts` many captures
     for (;;) {
@@ -410,7 +424,7 @@ int main(int argc, char **argv)
         distribution_correct = sanity_check_distribution(window_distribution);
         if (!distribution_correct) {
             fprintf(stderr, "Window distribution is not correct, ignoring window\n");
-            print_distribution(window_distribution);
+            print_distribution_to_stderr(window_distribution);
         } else {
             // The distribution is correct in this case, so proceed...
             // Calculate the relative entropy of the two distributions
@@ -418,15 +432,13 @@ int main(int argc, char **argv)
             std  = square_difference(nrne, baseline_distribution->mean);
 
             if (std > (20 * baseline_distribution->standard_deviation)) {
-                printf("\n[!!] ANOMALOUS USAGE DETECTED : %s",
-                        ctime((const time_t*)&window_distribution->start_time.tv_sec));
                 fprintf(stderr, "\n[!!] ANOMALOUS USAGE DETECTED : %s",
                         ctime((const time_t*)&window_distribution->start_time.tv_sec));
-                printf("  RDev: %f\n  WDev: %f\n", baseline_distribution->standard_deviation, std);
-                printf("  Norm: ");
-                print_distribution(baseline_distribution);
-                printf("  Capd: ");
-                print_distribution(window_distribution);
+                fprintf(stderr, "  RDev: %f\n  WDev: %f\n", baseline_distribution->standard_deviation, std);
+                fprintf(stderr, "  Norm: ");
+                print_distribution_to_stderr(baseline_distribution);
+                fprintf(stderr, "  Capd: ");
+                print_distribution_to_stderr(window_distribution);
                 num_attacks++;
             }
         }
@@ -434,7 +446,7 @@ int main(int argc, char **argv)
 
     printf("Num attacks  : %d\n", num_attacks);
 
-    // This will never be reached
+    // This will only be reached if not running live
     pcap_close(descr);
     free (baseline_distribution);
     free (window_distribution);

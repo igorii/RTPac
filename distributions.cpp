@@ -9,22 +9,16 @@
 #include "entropy.h"
 
 
-void print_distribution (packet_distribution *distrib)
+void print_distribution_to_stderr (packet_distribution *distrib)
 {
     int i;
 
-    //for (i = 0; i < LENN; ++i) {
-    //    printf("  %d|%.2f", i, element_frequency(distrib->pkt_len_class[i], distrib->count));
-    //}
+    for (i = 0; i < LENN; ++i) {
+        fprintf(stderr, "  %d|%.2f", i, element_frequency(distrib->pkt_len_class[i], distrib->count));
+    }
 
-    //printf("  [c=%lu]", distrib->count);
-
-    //printf("\n    Protocol Flag: ");
-    //for (i = 0; i < PFLN; ++i) {
-    //    printf(" \t%d(%f)", i, element_frequency(distrib->protocol_flag_class[i], distrib->count));
-    //}
-    //printf("\n");
-
+    fprintf(stderr, "  [c=%lu]", distrib->count);
+    fprintf(stderr, "\n");
 }
 
 // Average the relative entropies of all distributions in two classes

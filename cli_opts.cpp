@@ -7,7 +7,6 @@
 void parse_args(int argc, char **argv, cli_opts *opts) {
     int m, n, l, x, ch;
     char s[BUFFERSIZ];
-    bzero(opts, (sizeof(cli_opts)));
 
     for (n = 1; n < argc; n++) {
         switch ((int)argv[n][0]) {
@@ -34,6 +33,21 @@ void parse_args(int argc, char **argv, cli_opts *opts) {
                                         }
                                         x = 1;
                                         break;
+                              case 'm': if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            if (0 == strcmp(s, "a")) {
+                                                opts->mode = 'a';
+                                            } else if (0 == strcmp(s, "i")) {
+                                                opts->mode = 'i';
+                                            } else if (0 == strcmp(s, "o")) {
+                                                opts->mode = 'o';
+                                            }
+                                        }
+                                        x = 1;
+                                        break;
                               case 'l':
                                         if (m + 1 >= l) {
                                             puts( "Illegal syntax -- no argument" );
@@ -42,6 +56,10 @@ void parse_args(int argc, char **argv, cli_opts *opts) {
                                             strcpy(s, &argv[n][m+1]);
                                             opts->live = 0 == strcmp(s, "y");
                                         }
+                                        x = 1;
+                                        break;
+                              case 'v':
+                                        opts->verbose = 1;
                                         x = 1;
                                         break;
                               case 'b': if (m + 1 >= l) {

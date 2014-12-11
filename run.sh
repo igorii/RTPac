@@ -1,6 +1,6 @@
 #!/bin/bash
 
 
-./rtpac -ly -upc -b1000 -w1000 -n5
+./rtpac -ul -n5 -mi -b1000 -w500 -v
 
-#./rtpac -ln -upc -up -ul -upf -b10000000 -w500 -t../../testdata/training -a../../testdata/attack
+#./rtpac -ln -ul -b10000000 -w500 -t../../../testdata/training -a../../../testdata/attack
