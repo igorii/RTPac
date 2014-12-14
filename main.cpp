@@ -71,37 +71,17 @@ void process_tcp_packet (
     distrib->pkt_len_class       [ (get_packet_length_class(pkthdr))          ]++;
     distrib->protocol_flag_class [ (get_protocol_flag(P_TCP, tcp))            ]++;
 
-    // TODO Make this cleaner (or remove?) to satisfy statistical output goals
-    //     - possible use ncurses to update view with updating distributions showing
-    //       contrast between trained distributions and current window distributions
-    //     - if using ncurses, or some real-time view, move this to process_packet
-    //       to avoid duplicating in udp()
     if (verbose) {
-        printf("\nProtocol: TCP\n");
-        printf("   At                       : %s",
-                ctime((const time_t*)&pkthdr->ts.tv_sec));
-        printf("   From                     : %s\n", inet_ntoa(ip->ip_src));
-        printf("   To                       : %s\n", inet_ntoa(ip->ip_dst));
-        printf("   Src port                 : %d\n", ntohs(tcp->th_sport));
-        printf("   Dst port                 : %d\n", ntohs(tcp->th_dport));
-        printf("   Window iter              : %lu\n", distrib->count);
-        printf("   Primary class            : %d\n", get_protocol_flag(P_TCP, tcp));
-        printf("   Secondary class          : %d\n", get_dst_port_class(ntohs(tcp->th_dport)));
-        printf("   Length class             : %d\n", get_packet_length_class(pkthdr));
 
+        // Print timestamp
+        printf("\n%s", ctime((const time_t*)&pkthdr->ts.tv_sec));
 
-        printf("   Most active dst          : %d (%f)\n",
-                get_most_active_dst_port_class(distrib),
-                element_frequency(distrib->dst_port_class[
-                      get_most_active_dst_port_class(distrib)
-                    ], distrib->count));
+        // Print IP and TCP header info
+        printf("[TCP] ");
+        printf("%s:%d -> ", inet_ntoa(ip->ip_src), ntohs(tcp->th_sport));
+        printf("%s:%d\n",  inet_ntoa(ip->ip_dst), ntohs(tcp->th_dport));
 
-        printf("   Most active len          : %d (%f)\n",
-                get_most_active_pkt_len_class(distrib),
-                element_frequency(distrib->pkt_len_class[
-                      get_most_active_pkt_len_class(distrib)
-                    ], distrib->count));
-
+        // Print statistical information
         printf("   Dst Class Entropy        : %f\n",
                 entropy_of_distribution(distrib->count,
                     distrib->dst_port_class, CDSTN));
@@ -118,8 +98,12 @@ void process_tcp_packet (
                 entropy_of_distribution(distrib->count,
                     distrib->dst_port, DSTN));
 
+        // Print the payload data
         payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
         print_hex (payload);
+
+        // Print an end break
+        printf("\n");
         for (int i = 0; i < 80; ++i) printf("-");
         printf("\n");
     }
