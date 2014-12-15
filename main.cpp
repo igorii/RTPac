@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netinet/ether.h>
 #include <netinet/if_ether.h>
 #include <set>
 #include <stdlib.h>
@@ -57,6 +58,7 @@ void process_tcp_packet (
     const struct sniff_tcp *tcp;           /* The TCP header */
     const unsigned char *payload;          /* Packet payload */
     u_int size_tcp;
+    int payload_size;
 
     tcp = (struct sniff_tcp*)(packet + SIZE_ETHERNET + size_ip);
     size_tcp = TH_OFF(tcp) * 4;
@@ -69,43 +71,41 @@ void process_tcp_packet (
         return;
     }
 
+    // Update distributions
     distrib->count++;
-    distrib->dst_port            [ ntohs(tcp->th_dport)                       ]++;
-    distrib->dst_port_class      [ (get_dst_port_class(ntohs(tcp->th_dport))) ]++;
-    distrib->pkt_len_class       [ (get_packet_length_class(pkthdr))          ]++;
-    distrib->protocol_flag_class [ (get_protocol_flag(P_TCP, tcp))            ]++;
+    distrib->dst_port            [ ntohs(tcp->th_dport)                     ]++;
+    distrib->dst_port_class      [ get_dst_port_class(ntohs(tcp->th_dport)) ]++;
+    distrib->pkt_len_class       [ get_packet_length_class(pkthdr)          ]++;
+    distrib->protocol_flag_class [ get_protocol_flag(P_TCP, tcp)            ]++;
 
-    // TODO Make this cleaner (or remove?) to satisfy statistical output goals
-    //     - possible use ncurses to update view with updating distributions showing
-    //       contrast between trained distributions and current window distributions
-    //     - if using ncurses, or some real-time view, move this to process_packet
-    //       to avoid duplicating in udp()
+    // Get the payload size
+    payload_size = ntohs(ip->ip_len) - (size_ip + size_tcp);
+
+    // Print if in verbose mode
     if (verbose) {
-        printf("\nProtocol: TCP\n");
-        printf("   At                       : %s",
-                ctime((const time_t*)&pkthdr->ts.tv_sec));
-        printf("   From                     : %s\n", inet_ntoa(ip->ip_src));
-        printf("   To                       : %s\n", inet_ntoa(ip->ip_dst));
-        printf("   Src port                 : %d\n", ntohs(tcp->th_sport));
-        printf("   Dst port                 : %d\n", ntohs(tcp->th_dport));
-        printf("   Window iter              : %lu\n", distrib->count);
-        printf("   Primary class            : %d\n", get_protocol_flag(P_TCP, tcp));
-        printf("   Secondary class          : %d\n", get_dst_port_class(ntohs(tcp->th_dport)));
-        printf("   Length class             : %d\n", get_packet_length_class(pkthdr));
 
+        // Print timestamp
+        printf("\n%s", ctime((const time_t*)&pkthdr->ts.tv_sec));
 
-        printf("   Most active dst          : %d (%f)\n",
-                get_most_active_dst_port_class(distrib),
-                element_frequency(distrib->dst_port_class[
-                      get_most_active_dst_port_class(distrib)
-                    ], distrib->count));
+        // Ethernet
+        printf("[Ether] %s -> ",  ether_ntoa((const struct ether_addr *)&ethernet->ether_shost));
+        printf("%s\n",            ether_ntoa((const struct ether_addr *)&ethernet->ether_dhost));
 
-        printf("   Most active len          : %d (%f)\n",
-                get_most_active_pkt_len_class(distrib),
-                element_frequency(distrib->pkt_len_class[
-                      get_most_active_pkt_len_class(distrib)
-                    ], distrib->count));
+        // IP
+        printf("[IP   ] ");
+        printf("%s:%d -> ", inet_ntoa(ip->ip_src), ntohs(tcp->th_sport));
+        printf("%s:%d\n",   inet_ntoa(ip->ip_dst), ntohs(tcp->th_dport));
 
+        // Print IP and TCP header info
+        printf("[TCP  ] ");
+        printf("Seq|%u   Ack|%u \n",
+                ntohl(tcp->th_seq), ntohl(tcp->th_ack));
+
+        // Attributes
+        printf("[HLen ]  %d\n", size_ip);
+        printf("[Data ]  %d\n", payload_size);
+
+        // Print statistical information
         printf("   Dst Class Entropy        : %f\n",
                 entropy_of_distribution(distrib->count,
                     distrib->dst_port_class, CDSTN));
@@ -122,8 +122,14 @@ void process_tcp_packet (
                 entropy_of_distribution(distrib->count,
                     distrib->dst_port, DSTN));
 
+        // Print the payload data
         payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
-        print_hex (payload);
+        if (payload_size > 0) {
+            print_hex (payload);
+        }
+
+        // Print an end break
+        printf("\n");
         for (int i = 0; i < 80; ++i) printf("-");
         printf("\n");
     }
@@ -350,7 +356,7 @@ pcap_t *open_live(pcap_direction_t dir) {
         exit(1);
     }
 
-    pcap_setdirection(descr, PCAP_D_IN);
+    pcap_setdirection(descr, dir);
     return descr;
 }
 
