@@ -1,5 +1,5 @@
 all: main.cpp entropy.o cli_opts.o distributions.o
-	g++ -o rtpac main.cpp entropy.o cli_opts.o distributions.o -lpcap
+	g++ -o rtpac main.cpp entropy.o cli_opts.o distributions.o gnuplot_i.o -lpcap -Ignuplot_i/src
 
 entropy.o: entropy.cpp entropy.h
 	g++ -c entropy.cpp

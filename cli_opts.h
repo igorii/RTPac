@@ -4,6 +4,8 @@
 typedef struct opts {
     unsigned char live;
     unsigned char verbose;
+    unsigned char graph;
+
 #define BUFFERSIZ 256
     char training_file[BUFFERSIZ];
     char attack_file[BUFFERSIZ];
@@ -20,6 +22,7 @@ typedef struct opts {
 
     opts(): live(1),
             verbose(0),
+            graph(0),
             mode('a'),
             max_baseline_count(1000),
             max_window_count(1000),

@@ -12,6 +12,8 @@
 #include <math.h>
 #include <time.h>
 
+#include "gnuplot_i/src/gnuplot_i.h"
+
 #include "defs.h"
 #include "entropy.h"
 #include "cli_opts.h"
@@ -22,7 +24,9 @@
 pcap_t*       descr;   // PCAP id, global for self access within pcap_loop to break out
 unsigned char verbose; // Global verbosity level
 
-// @see "A Network Anomaly Detection Method Based on Relative Entropy Theory" -- Ya-ling Zhang, Zhao-gou Han, Jiao-xia Ren
+// @see "A Network Anomaly Detection Method
+//       Based on Relative Entropy Theory"
+//       -- Ya-ling Zhang, Zhao-gou Han, Jiao-xia Ren
 
 typedef struct s_callback_data {
     packet_distribution window;
@@ -197,6 +201,20 @@ void process_packet(
     }
 }
 
+int add_point(gnuplot_ctrl *plotid, double *points, int npoints, double point)
+{
+    int i, j;
+    for (i = 0; i < npoints - 1; ++i) {
+        points[i] = points[i + 1];
+    }
+
+    points[npoints - 1] = point;
+
+    // Draw the graph
+    gnuplot_resetplot(plotid);
+    gnuplot_plot_x(plotid, points, npoints, "Network entropy") ;
+}
+
 double sanity_check_probabilities (
         unsigned long classes,
         unsigned long count,
@@ -267,7 +285,12 @@ double std_dev(double *distribution, int num)
     return mean(squares, num);
 }
 
-void capture_regular_deviation(packet_distribution *baseline, cli_opts *opts)
+void capture_regular_deviation(
+        gnuplot_ctrl *plotid,
+        double *points,
+        int npoints,
+        packet_distribution *baseline,
+        cli_opts *opts)
 {
     int i, max_window_num;
     unsigned char distribution_correct;
@@ -299,6 +322,8 @@ void capture_regular_deviation(packet_distribution *baseline, cli_opts *opts)
             // The distribution is correct in this case, so proceed...
             // Calculate the relative entropy of the two distributions
             window_history[i] = normalized_relative_network_entropy(&window, baseline, opts);
+            if (opts->graph)
+                add_point(plotid, points, npoints, window_history[i]);
         }
     }
 
@@ -367,89 +392,142 @@ packet_distribution *new_distribution() {
     return distribution;
 }
 
-int main(int argc, char **argv)
+int populate_baseline (
+        packet_distribution *baseline,
+        cli_opts *opts,
+        double *points,
+        int npoints,
+        gnuplot_ctrl *plotid)
 {
-    packet_distribution *baseline_distribution;
-    packet_distribution *window_distribution;
-    double nrne;
-    double std;
     unsigned char distribution_correct;
-    int num_attacks = 0;
-    cli_opts opts;
 
-    parse_args(argc, argv, &opts);
-    verbose = opts.verbose;
-
-    // Initialize the running distribution
-    baseline_distribution = new_distribution();
-    window_distribution   = new_distribution();
-    descr                 = pcap_open(&opts, 1);
+    // Open the interface
+    descr = pcap_open(opts, 1);
 
     // Begin capturing packets for baseline behaviour
     fprintf(stderr, "Beginning initial baseline training...\n\n");
-    baseline_distribution->max_count = opts.max_baseline_count;
-    pcap_loop(descr, -1, process_packet, (u_char *)baseline_distribution);
-    distribution_correct = sanity_check_distribution(baseline_distribution);
+    baseline->max_count = opts->max_baseline_count;
+    pcap_loop(descr, -1, process_packet, (u_char *)baseline);
+    distribution_correct = sanity_check_distribution(baseline);
     if (!distribution_correct) {
         fprintf(stderr, "Baseline distribution is not correct\n");
         exit(1);
     }
 
+    // Close the baseline interface
     pcap_close(descr);
-    descr = pcap_open(&opts, 1);
-    capture_regular_deviation(baseline_distribution, &opts);
 
+    // Open the window interface
+    descr = pcap_open(opts, 1);
+
+    // Capture the regular deviation of traffic
+    capture_regular_deviation(plotid, points, npoints, baseline, opts);
+
+    // Print finished status
     fprintf (stderr, "\nFinished capturing baseline behaviour ");
-    print_distribution_to_stderr(baseline_distribution);
-    fprintf(stderr, "Regular deviation: %f\n\n", baseline_distribution->standard_deviation);
-
+    print_distribution_to_stderr(baseline);
+    fprintf(stderr, "Regular deviation: %f\n\n", baseline->standard_deviation);
     pcap_close(descr);
-    descr = pcap_open(&opts, 0);
+}
+
+void monitor_traffic (
+        cli_opts *opts,
+        packet_distribution *baseline,
+        double *points,
+        int npoints,
+        gnuplot_ctrl *plotid)
+{
+    double nrne;
+    double std;
+    unsigned char distribution_correct;
+    int num_attacks = 0;
+    packet_distribution *window;
+    descr = pcap_open(opts, 0);
+    window = new_distribution();
 
     // Begin capturing window distributions and comparing every `window_size_in_pkts` many captures
     for (;;) {
 
         // Reset the window distribution
-        bzero(window_distribution, sizeof (packet_distribution));
-        window_distribution->max_count = opts.max_window_count;
-        pcap_loop(descr, -1, process_packet, (u_char *)window_distribution);
+        bzero(window, sizeof (packet_distribution));
+        window->max_count = opts->max_window_count;
+        pcap_loop(descr, -1, process_packet, (u_char *)window);
 
         // If we have finished reading the file, break out of the loop
-        if (window_distribution->count < window_distribution->max_count) {
+        if (window->count < window->max_count) {
             break;
         }
 
         // Sanity check, ensure all probability vectors sum to 1
         //        Kullback-Leibler divergence is only defined at this point
-        distribution_correct = sanity_check_distribution(window_distribution);
-        if (!distribution_correct) {
+        distribution_correct = sanity_check_distribution(window);
+        if (!distribution_correct)
+        {
             fprintf(stderr, "Window distribution is not correct, ignoring window\n");
-            print_distribution_to_stderr(window_distribution);
-        } else {
+            print_distribution_to_stderr(window);
+        }
+        else
+        {
             // The distribution is correct in this case, so proceed...
             // Calculate the relative entropy of the two distributions
-            nrne = normalized_relative_network_entropy(window_distribution, baseline_distribution, &opts);
-            std  = square_difference(nrne, baseline_distribution->mean);
+            nrne = normalized_relative_network_entropy(window, baseline, opts);
+            std  = square_difference(nrne, baseline->mean);
 
-            if (std > (20 * baseline_distribution->standard_deviation)) {
+            // Add the points to the real-time chart
+            if (opts->graph)
+                add_point(plotid, points, npoints, nrne);
+
+
+            if (std > (20 * baseline->standard_deviation)) {
                 fprintf(stderr, "\n[!!] ANOMALOUS USAGE DETECTED : %s",
-                        ctime((const time_t*)&window_distribution->start_time.tv_sec));
-                fprintf(stderr, "  RDev: %f\n  WDev: %f\n", baseline_distribution->standard_deviation, std);
+                        ctime((const time_t*)&window->start_time.tv_sec));
+                fprintf(stderr, "  RDev: %f\n  WDev: %f\n", baseline->standard_deviation, std);
                 fprintf(stderr, "  Norm: ");
-                print_distribution_to_stderr(baseline_distribution);
+                print_distribution_to_stderr(baseline);
                 fprintf(stderr, "  Capd: ");
-                print_distribution_to_stderr(window_distribution);
+                print_distribution_to_stderr(window);
                 num_attacks++;
             }
         }
     }
 
+    // Print the number of attacks observed in the attack file
     printf("Num attacks  : %d\n", num_attacks);
 
     // This will only be reached if not running live
     pcap_close(descr);
+    free (window);
+}
+
+int main(int argc, char **argv)
+{
+    packet_distribution *baseline_distribution;
+    cli_opts opts;
+    gnuplot_ctrl *gnuplot_id;
+
+#define NPOINTS 100
+    double points[NPOINTS];
+    bzero(points, sizeof(points));
+
+    parse_args(argc, argv, &opts);
+    verbose = opts.verbose;
+
+    // Initialize the real-time chart as line chart
+    gnuplot_id = gnuplot_init();
+    gnuplot_setstyle(gnuplot_id, "lines");
+
+    // Initialize the running distribution
+    baseline_distribution = new_distribution();
+
+    // Populate the baseline distribution
+    populate_baseline(baseline_distribution, &opts, points, NPOINTS, gnuplot_id);
+
+    // Monitor the traffic for anomalies
+    monitor_traffic(&opts, baseline_distribution, points, NPOINTS, gnuplot_id);
+
+    // Cleanup memory and resources
     free (baseline_distribution);
-    free (window_distribution);
+    gnuplot_close(gnuplot_id) ;
     return 0;
 }
 

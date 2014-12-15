@@ -62,6 +62,10 @@ void parse_args(int argc, char **argv, cli_opts *opts) {
                                         opts->verbose = 1;
                                         x = 1;
                                         break;
+                              case 'g':
+                                        opts->graph = 1;
+                                        x = 1;
+                                        break;
                               case 'b': if (m + 1 >= l) {
                                             puts( "Illegal syntax -- no argument" );
                                             exit(1);
