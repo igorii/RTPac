@@ -75,6 +75,15 @@ void parse_args(int argc, char **argv, cli_opts *opts) {
                                         }
                                         x = 1;
                                         break;
+                              case 'c': if (m + 1 >= l) {
+                                            puts( "Illegal syntax -- no argument" );
+                                            exit(1);
+                                        } else {
+                                            strcpy(s, &argv[n][m+1]);
+                                            opts->cutoff = atof(s);
+                                        }
+                                        x = 1;
+                                        break;
                               case 'w': if (m + 1 >= l) {
                                             puts( "Illegal syntax -- no argument" );
                                             exit(1);

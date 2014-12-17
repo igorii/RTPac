@@ -17,12 +17,14 @@ typedef struct opts {
     unsigned char use_dst_port;
     unsigned char use_pkt_len;
     unsigned char use_protocol_flag;
+    double cutoff;
 
     char mode;
 
     opts(): live(1),
             verbose(0),
             graph(0),
+            cutoff(0.5),
             mode('a'),
             max_baseline_count(1000),
             max_window_count(1000),

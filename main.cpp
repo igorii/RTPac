@@ -12,6 +12,8 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <unistd.h>
+#include <iostream>
 
 #include "gnuplot_i/src/gnuplot_i.h"
 
@@ -66,11 +68,6 @@ void process_tcp_packet (
         return;
     }
 
-    // TODO REMOVE THIS -- Skip SSH traffic for now to remove feedback loop
-    if (22 == ntohs(tcp->th_sport) || 22 == ntohs(tcp->th_dport)) {
-        return;
-    }
-
     // Update distributions
     distrib->count++;
     distrib->dst_port            [ ntohs(tcp->th_dport)                     ]++;
@@ -88,8 +85,8 @@ void process_tcp_packet (
         printf("\n%s", ctime((const time_t*)&pkthdr->ts.tv_sec));
 
         // Ethernet
-        printf("[Ether] %s -> ",  ether_ntoa((const struct ether_addr *)&ethernet->ether_shost));
-        printf("%s\n",            ether_ntoa((const struct ether_addr *)&ethernet->ether_dhost));
+        printf("[Ether] %s -> ", ether_ntoa((const struct ether_addr *)&ethernet->ether_shost));
+        printf("%s\n",           ether_ntoa((const struct ether_addr *)&ethernet->ether_dhost));
 
         // IP
         printf("[IP   ] ");
@@ -98,6 +95,18 @@ void process_tcp_packet (
 
         // Print IP and TCP header info
         printf("[TCP  ] ");
+
+        // Print TCP flags (helps to follow stream)
+#define CHECK_BIT(var,pos) ((var) & (pos))
+        printf("%c%c%c%c%c%c  ",
+                (CHECK_BIT(tcp->th_flags, TH_URG) ? 'U' : '-'),
+                (CHECK_BIT(tcp->th_flags, TH_SYN) ? 'S' : '-'),
+                (CHECK_BIT(tcp->th_flags, TH_ACK) ? 'A' : '-'),
+                (CHECK_BIT(tcp->th_flags, TH_FIN) ? 'F' : '-'));
+                (CHECK_BIT(tcp->th_flags, TH_PUSH)? 'P' : '-'),
+                (CHECK_BIT(tcp->th_flags, TH_RST) ? 'R' : '-'),
+
+        // Print syn/ack numbers
         printf("Seq|%u   Ack|%u \n",
                 ntohl(tcp->th_seq), ntohl(tcp->th_ack));
 
@@ -149,11 +158,26 @@ void process_udp_packet (
     u_int size_udp;
     udp = (struct sniff_udp*)(packet + SIZE_ETHERNET + size_ip);
 
-    distrib->count++;
-    distrib->dst_port            [ ntohs(udp->dport)                     ]++;
-    distrib->dst_port_class      [ get_dst_port_class(ntohs(udp->dport)) ]++;
-    distrib->pkt_len_class       [ get_packet_length_class(pkthdr)       ]++;
-    distrib->protocol_flag_class [ get_protocol_flag(P_UDP, NULL)        ]++;
+    if (verbose) {
+
+        // Print timestamp
+        printf("\n%s", ctime((const time_t*)&pkthdr->ts.tv_sec));
+
+        // Ethernet
+        printf("[Ether] %s -> ",  ether_ntoa((const struct ether_addr *)&ethernet->ether_shost));
+        printf("%s\n",            ether_ntoa((const struct ether_addr *)&ethernet->ether_dhost));
+
+        // IP
+        printf("[IP   ] ");
+        printf("%s:%d -> ", inet_ntoa(ip->ip_src), ntohs(udp->sport));
+        printf("%s:%d\n",   inet_ntoa(ip->ip_dst), ntohs(udp->dport));
+
+        // Print UDP info
+        printf("[UDP   ] \n");
+
+        // Attributes
+        printf("[HLen ]  %d\n", size_ip);
+    }
 }
 
 // Capture a packet from the network, switch on its protocol, and classify its distributoin information.
@@ -176,11 +200,14 @@ void process_packet(
     }
 
     // Ensure correct packet length (throw away invalid packets)
-    // TODO - should the distribution of correct to incorrect packets be logged?
+    //
+    // Ethernet header
     ethernet = (struct sniff_ethernet*)(packet);
+
+    // IP header
     ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
     size_ip = IP_HL(ip) * 4;
-    if (size_ip < 20) {
+    if (size_ip < 20 /*bytes*/ ) {
         return; // Invalid IP header length
     }
 
@@ -190,7 +217,9 @@ void process_packet(
             process_tcp_packet(distrib, pkthdr, packet, ethernet, ip, size_ip);
             break;
         case IPPROTO_UDP:
-            //process_udp_packet(distrib, pkthdr, packet, ethernet, ip, size_ip);
+            if (verbose) {
+                process_tcp_packet(distrib, pkthdr, packet, ethernet, ip, size_ip);
+            }
             break;
         case IPPROTO_ICMP:
             return;
@@ -207,6 +236,7 @@ void process_packet(
     }
 }
 
+// Add a point to a gnu graph and scroll left
 int add_point(gnuplot_ctrl *plotid, double *points, int npoints, double point)
 {
     int i, j;
@@ -221,6 +251,7 @@ int add_point(gnuplot_ctrl *plotid, double *points, int npoints, double point)
     gnuplot_plot_x(plotid, points, npoints, "Network entropy") ;
 }
 
+// Return the frequency sum of all frequencies in a distribution
 double sanity_check_probabilities (
         unsigned long classes,
         unsigned long count,
@@ -234,6 +265,7 @@ double sanity_check_probabilities (
     return sum;
 }
 
+// Ensure the probability sums are equal to 1
 unsigned char sanity_check_distribution (packet_distribution *distrib)
 {
     // All sums should be 1
@@ -243,6 +275,7 @@ unsigned char sanity_check_distribution (packet_distribution *distrib)
                 distrib->count, distrib->pkt_len_class));
 }
 
+//Print the entropies
 void relative_entropy_of_distributions (
         packet_distribution *distrib1,
         packet_distribution *distrib2)
@@ -291,6 +324,7 @@ double std_dev(double *distribution, int num)
     return mean(squares, num);
 }
 
+// Capture and model the regular network traffic
 void capture_regular_deviation(
         gnuplot_ctrl *plotid,
         double *points,
@@ -328,8 +362,6 @@ void capture_regular_deviation(
             // The distribution is correct in this case, so proceed...
             // Calculate the relative entropy of the two distributions
             window_history[i] = normalized_relative_network_entropy(&window, baseline, opts);
-            if (opts->graph)
-                add_point(plotid, points, npoints, window_history[i]);
         }
     }
 
@@ -338,6 +370,7 @@ void capture_regular_deviation(
     baseline->standard_deviation = std_dev(window_history, max_window_num);
 }
 
+// Open libpcap live
 pcap_t *open_live(pcap_direction_t dir) {
     char *dev;
     char errbuf[PCAP_ERRBUF_SIZE];
@@ -360,7 +393,8 @@ pcap_t *open_live(pcap_direction_t dir) {
     return descr;
 }
 
-pcap_t *open_offline(const char * file, pcap_direction_t dir) {
+// Open libpcap on a log file
+pcap_t *open_offline(const char *file, pcap_direction_t dir) {
     char errbuf[PCAP_ERRBUF_SIZE];
 
     descr = pcap_open_offline(file, errbuf);
@@ -369,10 +403,11 @@ pcap_t *open_offline(const char * file, pcap_direction_t dir) {
         exit(1);
     }
 
-    pcap_setdirection(descr, PCAP_D_IN);
+    pcap_setdirection(descr, dir);
     return descr;
 }
 
+// Open libpcap online or offline specified in the options
 pcap_t *pcap_open (cli_opts *opts, unsigned char isTraining)
 {
     pcap_direction_t dir;
@@ -380,6 +415,7 @@ pcap_t *pcap_open (cli_opts *opts, unsigned char isTraining)
         case 'a': dir = PCAP_D_INOUT; break;
         case 'i': dir = PCAP_D_IN;    break;
         case 'o': dir = PCAP_D_OUT;   break;
+        default:  dir = PCAP_D_INOUT; break;
     }
 
     if (opts->live) {
@@ -436,6 +472,12 @@ int populate_baseline (
     pcap_close(descr);
 }
 
+double c_abs (double x)
+{
+    if (x < 0) return 0 - x;
+    else       return x;
+}
+
 void monitor_traffic (
         cli_opts *opts,
         packet_distribution *baseline,
@@ -447,9 +489,12 @@ void monitor_traffic (
     double std;
     unsigned char distribution_correct;
     int num_attacks = 0;
+    int num_windows = 0;
     packet_distribution *window;
     descr = pcap_open(opts, 0);
     window = new_distribution();
+
+    printf("Watching for entropy difference %f...\n", opts->cutoff);
 
     // Begin capturing window distributions and comparing every `window_size_in_pkts` many captures
     for (;;) {
@@ -463,6 +508,8 @@ void monitor_traffic (
         if (window->count < window->max_count) {
             break;
         }
+
+        num_windows++;
 
         // Sanity check, ensure all probability vectors sum to 1
         //        Kullback-Leibler divergence is only defined at this point
@@ -478,13 +525,15 @@ void monitor_traffic (
             // Calculate the relative entropy of the two distributions
             nrne = normalized_relative_network_entropy(window, baseline, opts);
             std  = square_difference(nrne, baseline->mean);
+            //std = c_abs(nrne - baseline->mean) / baseline->standard_deviation;
 
             // Add the points to the real-time chart
-            if (opts->graph)
-                add_point(plotid, points, npoints, nrne);
+            if (opts->graph) {
+                add_point(plotid, points, npoints, std);
+            }
 
-
-            if (std > (20 * baseline->standard_deviation)) {
+            // Check for anomaly
+            if (std > opts->cutoff) {
                 fprintf(stderr, "\n[!!] ANOMALOUS USAGE DETECTED : %s",
                         ctime((const time_t*)&window->start_time.tv_sec));
                 fprintf(stderr, "  RDev: %f\n  WDev: %f\n", baseline->standard_deviation, std);
@@ -494,46 +543,51 @@ void monitor_traffic (
                 print_distribution_to_stderr(window);
                 num_attacks++;
             }
+            }
         }
+
+        // Print the number of attacks observed in the attack file
+        printf("Num attacks : %d\n", num_attacks);
+        printf("Num windows : %d\n", num_windows);
+        fprintf(stderr, "\nBASELINE START : %s",
+                ctime((const time_t*)&baseline->start_time.tv_sec));
+
+        // This will only be reached if not running live
+        pcap_close(descr);
+        free (window);
     }
 
-    // Print the number of attacks observed in the attack file
-    printf("Num attacks  : %d\n", num_attacks);
-
-    // This will only be reached if not running live
-    pcap_close(descr);
-    free (window);
-}
-
-int main(int argc, char **argv)
-{
-    packet_distribution *baseline_distribution;
-    cli_opts opts;
-    gnuplot_ctrl *gnuplot_id;
+    int main(int argc, char **argv)
+    {
+        packet_distribution *baseline_distribution;
+        cli_opts opts;
+        gnuplot_ctrl *gnuplot_id;
 
 #define NPOINTS 100
-    double points[NPOINTS];
-    bzero(points, sizeof(points));
+        double points[NPOINTS];
+        bzero(points, sizeof(points));
 
-    parse_args(argc, argv, &opts);
-    verbose = opts.verbose;
+        parse_args(argc, argv, &opts);
+        verbose = opts.verbose;
 
-    // Initialize the real-time chart as line chart
-    gnuplot_id = gnuplot_init();
-    gnuplot_setstyle(gnuplot_id, "lines");
+        // Initialize the real-time chart as line chart
+        gnuplot_id = gnuplot_init();
+        gnuplot_setstyle(gnuplot_id, "lines");
 
-    // Initialize the running distribution
-    baseline_distribution = new_distribution();
+        // Initialize the running distribution
+        baseline_distribution = new_distribution();
 
-    // Populate the baseline distribution
-    populate_baseline(baseline_distribution, &opts, points, NPOINTS, gnuplot_id);
+        // Populate the baseline distribution
+        populate_baseline(baseline_distribution, &opts, points, NPOINTS, gnuplot_id);
 
-    // Monitor the traffic for anomalies
-    monitor_traffic(&opts, baseline_distribution, points, NPOINTS, gnuplot_id);
+        // Monitor the traffic for anomalies
+        monitor_traffic(&opts, baseline_distribution, points, NPOINTS, gnuplot_id);
 
-    // Cleanup memory and resources
-    free (baseline_distribution);
-    gnuplot_close(gnuplot_id) ;
-    return 0;
-}
+        std::cin.get();
+
+        // Cleanup memory and resources
+        free (baseline_distribution);
+        gnuplot_close(gnuplot_id) ;
+        return 0;
+    }
 
